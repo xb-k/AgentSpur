@@ -31,6 +31,11 @@ fi
 rm -rf "$BUILD_WORK_DIR"
 mkdir -p "$STAGING_DIR" "$ICONSET_DIR"
 
+# 若覆盖解压到旧目录，自动清理旧版残留的 main.swift，避免与 @main (AgentSpurApp.swift) 冲突
+if [[ -f "${ROOT_DIR}/Sources/AgentSpur/main.swift" && -f "${ROOT_DIR}/Sources/AgentSpur/AgentSpurApp.swift" ]]; then
+  rm -f "${ROOT_DIR}/Sources/AgentSpur/main.swift"
+fi
+
 echo "==> [2/6] 编译原生 AppKit 可执行文件 (Release)..."
 BIN_PATH=""
 if swift build -c release --arch arm64 --arch x86_64 >/dev/null 2>&1; then

@@ -10,7 +10,8 @@ import makefileRaw from '../Makefile?raw';
 import readmeRaw from '../README.md?raw';
 import infoPlistRaw from '../Resources/Info.plist?raw';
 import samplePackJsonRaw from '../Resources/sample-deepseek-pack.json?raw';
-import mainSwiftRaw from '../Sources/AgentSpur/main.swift?raw';
+import appEntrySwiftRaw from '../Sources/AgentSpur/AgentSpurApp.swift?raw';
+import pricingEngineSwiftRaw from '../Sources/AgentSpur/DeepSeekPricingEngine.swift?raw';
 import modelsSwiftRaw from '../Sources/AgentSpur/Models.swift?raw';
 import dbReaderSwiftRaw from '../Sources/AgentSpur/OpenCodeDBReader.swift?raw';
 import spriteRendererSwiftRaw from '../Sources/AgentSpur/SpriteRenderer.swift?raw';
@@ -43,9 +44,14 @@ const NATIVE_FILES: SourceFileItem[] = [
     content: packageSwiftRaw,
   },
   {
-    relPath: 'Sources/AgentSpur/main.swift',
-    label: 'Sources/AgentSpur/main.swift',
-    content: mainSwiftRaw,
+    relPath: 'Sources/AgentSpur/AgentSpurApp.swift',
+    label: 'Sources/AgentSpur/AgentSpurApp.swift',
+    content: appEntrySwiftRaw,
+  },
+  {
+    relPath: 'Sources/AgentSpur/DeepSeekPricingEngine.swift',
+    label: 'Sources/AgentSpur/DeepSeekPricingEngine.swift (汇率+阶梯计费+CSV)',
+    content: pricingEngineSwiftRaw,
   },
   {
     relPath: 'Sources/AgentSpur/PopoverViews.swift',

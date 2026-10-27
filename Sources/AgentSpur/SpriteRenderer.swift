@@ -238,28 +238,25 @@ enum SpriteRenderer {
     }
 
     static func exportHighResAppIconPNG(to outputPath: String, pixelSize: Int = 1024) -> Bool {
-        guard let rep = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: pixelSize,
-            pixelsHigh: pixelSize,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil,
+            width: pixelSize,
+            height: pixelSize,
+            bitsPerComponent: 8,
             bytesPerRow: 0,
-            bitsPerPixel: 0
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else {
             return false
         }
 
-        NSGraphicsContext.saveGraphicsState()
-        if let gfx = NSGraphicsContext(bitmapImageRep: rep) {
-            NSGraphicsContext.current = gfx
-            drawAgentSpurEmblem(in: gfx.cgContext, size: CGFloat(pixelSize))
-        }
-        NSGraphicsContext.restoreGraphicsState()
+        drawAgentSpurEmblem(in: ctx, size: CGFloat(pixelSize))
 
+        guard let cgImage = ctx.makeImage() else {
+            return false
+        }
+        let rep = NSBitmapImageRep(cgImage: cgImage)
         guard let pngData = rep.representation(using: .png, properties: [:]) else {
             return false
         }

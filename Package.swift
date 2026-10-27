@@ -18,6 +18,7 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("CoreServices"),
                 .linkedFramework("QuartzCore"),
+                .linkedFramework("UniformTypeIdentifiers"),
                 .linkedFramework("UserNotifications"),
                 .linkedLibrary("sqlite3")
             ]
