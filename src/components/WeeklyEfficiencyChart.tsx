@@ -1,16 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { motion } from 'motion/react';
-import { WeeklyEfficiencyPoint } from '../types/agent';
+import { OpencodeDbTelemetry, WeeklyEfficiencyPoint } from '../types/agent';
 
 type ChartMetric = 'tasksPerHour' | 'avgSeconds';
 
 interface WeeklyEfficiencyChartProps {
   data: WeeklyEfficiencyPoint[];
+  telemetry?: OpencodeDbTelemetry;
 }
 
 export const WeeklyEfficiencyChart: React.FC<WeeklyEfficiencyChartProps> = ({
   data,
+  telemetry,
 }) => {
   const [metric, setMetric] = useState<ChartMetric>('tasksPerHour');
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
@@ -299,8 +301,11 @@ export const WeeklyEfficiencyChart: React.FC<WeeklyEfficiencyChartProps> = ({
               {peakThroughput.toFixed(1)} 项/时
             </span>
           </div>
-          <p className="text-[11px] text-slate-400">
-            基于本机 opencode 会话完成记录生成（悬停节点查看单日吞吐与平均耗时）
+          <p className="text-[11px] text-slate-400 font-mono tabular-nums">
+            基于 {telemetry?.dbPath ?? '~/.local/share/opencode/opencode.db'} (session · message · part) 只读聚合
+            {telemetry
+              ? ` · 当前活跃 reasoning ${telemetry.activeReasoningParts} · tool ${telemetry.activeToolParts} · permission ${telemetry.pendingPermissions}`
+              : ''}
           </p>
         </div>
 
@@ -308,7 +313,7 @@ export const WeeklyEfficiencyChart: React.FC<WeeklyEfficiencyChartProps> = ({
         <div
           role="tablist"
           aria-label="切换效率指标"
-          className="inline-flex items-center gap-0.5 rounded-lg bg-slate-900/[0.045] p-0.5 text-xs"
+          className="inline-flex items-center gap-0.5 rounded-xl border border-slate-200/70 bg-slate-100/70 p-0.5 text-xs"
         >
           {(
             [
@@ -324,9 +329,9 @@ export const WeeklyEfficiencyChart: React.FC<WeeklyEfficiencyChartProps> = ({
                 type="button"
                 aria-selected={active}
                 onClick={() => setMetric(item.id)}
-                className={`relative rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 ${
+                className={`relative rounded-[9px] px-2.5 py-1 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   active
-                    ? 'text-slate-900'
+                    ? 'text-sky-950'
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
@@ -334,7 +339,7 @@ export const WeeklyEfficiencyChart: React.FC<WeeklyEfficiencyChartProps> = ({
                   <motion.span
                     layoutId="efficiencyMetricTab"
                     transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-                    className="absolute inset-0 rounded-md bg-white shadow-[0_1px_3px_rgba(15,23,42,0.08)]"
+                    className="absolute inset-0 rounded-[9px] bg-white shadow-[0_1px_3px_rgba(15,23,42,0.06)] ring-1 ring-slate-900/[0.04]"
                   />
                 )}
                 <span className="relative z-10">{item.label}</span>

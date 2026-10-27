@@ -11,6 +11,14 @@ export enum TargetApp {
   ITerm2 = 'iTerm2',
 }
 
+export type AutoFocusWindowTarget =
+  | 'opencode-tui'
+  | 'iterm-all'
+  | 'iterm-tab-0'
+  | 'iterm-tab-1'
+  | 'iterm-tab-2'
+  | 'iterm-tab-3';
+
 export type CharacterArchetype =
   | 'droplet'
   | 'glyph'
@@ -40,6 +48,10 @@ export interface SubAgentTask {
   title: string;
   subagentRole: string;
   status: AgentStatus;
+  /** Unix ms timestamp from opencode.db (part.time_created / permission.time_created) when entering current status */
+  stateEnteredAt: number;
+  /** Exact opencode.db table & row provenance */
+  dbRecordRef: string;
   targetApp: TargetApp;
   targetRef: string;
   itermTabIndex?: number;
@@ -54,6 +66,10 @@ export interface MasterSession {
   engine: 'opencode' | 'DeepSeek';
   modelName: string;
   status: AgentStatus;
+  /** Unix ms timestamp from opencode.db (part.time_created / permission.time_created / session.time_updated) when entering current status */
+  stateEnteredAt: number;
+  /** Exact opencode.db table & row provenance */
+  dbRecordRef: string;
   targetApp: TargetApp;
   targetRef: string;
   itermTabIndex?: number;
@@ -72,6 +88,14 @@ export interface WeeklyEfficiencyPoint {
   avgSeconds: number;
   completedCount: number;
   isToday?: boolean;
+}
+
+export interface OpencodeDbTelemetry {
+  dbPath: string;
+  activeReasoningParts: number;
+  activeToolParts: number;
+  pendingPermissions: number;
+  subAgentSessionsCount: number;
 }
 
 export interface QuotaState {

@@ -17,6 +17,7 @@ import {
   AgentSpriteCanvas,
   subscribeGlobalFrameIndex,
 } from './AgentSpriteCanvas';
+import { formatLiveStateTimerLabel } from '../utils/opencodeDb';
 import { DesktopTabMode } from './MacMenuBar';
 
 interface DesktopWorkspaceProps {
@@ -36,6 +37,8 @@ interface DesktopWorkspaceProps {
     nextStatus: AgentStatus,
     subTaskId?: string
   ) => void;
+  autoFocusedSubTaskIds?: ReadonlySet<string>;
+  nowMs: number;
   onSelectSessionFromDesktop: (sessionId: string, subTaskId?: string) => void;
 }
 
@@ -58,6 +61,8 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
   onImportPackObject,
   onImportPackFile,
   onUpdateSessionStatus,
+  autoFocusedSubTaskIds,
+  nowMs,
   onSelectSessionFromDesktop,
 }) => {
   const [inspectedState, setInspectedState] = useState<AgentStatus>(
@@ -88,12 +93,21 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
   const activeStatus = selectedSubTask
     ? selectedSubTask.status
     : selectedSession.status;
+  const activeStateEnteredAt = selectedSubTask
+    ? selectedSubTask.stateEnteredAt
+    : selectedSession.stateEnteredAt;
+  const activeDbRecordRef = selectedSubTask
+    ? selectedSubTask.dbRecordRef
+    : selectedSession.dbRecordRef;
   const activeLogLines = selectedSubTask
     ? selectedSubTask.logLines
     : selectedSession.logLines;
   const activeItermIndex =
     (selectedSubTask ? selectedSubTask.itermTabIndex : selectedSession.itermTabIndex) ??
     0;
+  const isSelectedSubTaskAutoFocused = Boolean(
+    selectedSubTask && autoFocusedSubTaskIds?.has(selectedSubTask.id)
+  );
 
   const handleDownloadSampleJson = () => {
     const payload = JSON.stringify(SAMPLE_CUSTOM_PACK_JSON, null, 2);
@@ -182,7 +196,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
             <button
               type="button"
               onClick={handleDownloadSampleJson}
-              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-black/[0.05] hover:text-slate-900 transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1 rounded-xl border border-slate-200/80 bg-white/80 px-2.5 py-1 text-xs font-medium text-slate-600 shadow-[0_1px_2px_rgba(15,23,42,0.03)] hover:bg-white hover:text-slate-900 hover:border-slate-300/80 transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer"
             >
               <Download className="w-3.5 h-3.5 shrink-0" />
               <span>示例 JSON</span>
@@ -203,7 +217,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
             <button
               type="button"
               onClick={() => fileUploadRef.current?.click()}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300/60 bg-sky-500/[0.09] px-3 py-1 text-xs font-medium text-sky-700 shadow-[0_1px_2px_rgba(14,165,233,0.06)] hover:bg-sky-500/[0.15] hover:border-sky-400/60 transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer"
             >
               <FolderOpen className="w-3.5 h-3.5 shrink-0" />
               <span>导入角色包</span>
@@ -341,7 +355,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
                   onClick={() =>
                     setCustomGrid(SAMPLE_CUSTOM_PACK_JSON.customBaseSprite)
                   }
-                  className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-800 transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200/80 bg-white/75 px-2 py-0.5 text-xs text-slate-500 hover:bg-white hover:text-slate-800 transition-all whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   <RotateCcw className="w-3 h-3" />
                   <span>重置</span>
@@ -349,7 +363,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
               </div>
 
               <div className="flex flex-col sm:flex-row gap-4 items-start">
-                <div className="grid grid-cols-12 gap-0.5 p-2 rounded-xl bg-slate-900/[0.04] shrink-0">
+                <div className="grid grid-cols-12 gap-0.5 p-2 rounded-xl border border-slate-200/70 bg-slate-100/70 shrink-0">
                   {customGrid.map((row, rIdx) =>
                     row.split('').map((cell, cIdx) => (
                       <button
@@ -357,12 +371,12 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
                         type="button"
                         onClick={() => toggleGridCell(rIdx, cIdx)}
                         aria-label={`像素 ${rIdx + 1},${cIdx + 1}`}
-                        className={`w-3.5 h-3.5 rounded-[2px] transition-colors ${
+                        className={`w-3.5 h-3.5 rounded-[3px] transition-colors cursor-pointer ${
                           cell === '#'
-                            ? 'bg-slate-900'
+                            ? 'bg-slate-700'
                             : cell === '+'
-                            ? 'bg-sky-500'
-                            : 'bg-white/80 hover:bg-white'
+                            ? 'bg-sky-400'
+                            : 'bg-white/85 hover:bg-white'
                         }`}
                       />
                     ))
@@ -376,14 +390,14 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
                     placeholder="角色名称"
                     value={customName}
                     onChange={(e) => setCustomName(e.target.value)}
-                    className="w-full rounded-lg border border-black/[0.08] bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                    className="w-full rounded-xl border border-slate-200/85 bg-white/85 px-3 py-1.5 text-xs text-slate-800 shadow-[0_1px_2px_rgba(15,23,42,0.03)] focus:bg-white focus:outline-none focus:ring-2 focus:ring-sky-400/30 focus:border-sky-400/60 transition-all"
                   />
 
                   <select
                     aria-label="绑定 DeepSeek 模型"
                     value={customModel}
                     onChange={(e) => setCustomModel(e.target.value)}
-                    className="w-full rounded-lg border border-black/[0.08] bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                    className="w-full rounded-xl border border-slate-200/85 bg-white/85 px-3 py-1.5 text-xs text-slate-800 shadow-[0_1px_2px_rgba(15,23,42,0.03)] focus:bg-white focus:outline-none focus:ring-2 focus:ring-sky-400/30 focus:border-sky-400/60 transition-all cursor-pointer"
                   >
                     <option value="deepseek/deepseek-reasoner">
                       deepseek/deepseek-reasoner
@@ -396,7 +410,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
                   <button
                     type="button"
                     onClick={handleApplyCustomPack}
-                    className="w-full rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 transition-colors whitespace-nowrap"
+                    className="w-full rounded-xl border border-sky-300/60 bg-sky-500/[0.09] px-3 py-1.5 text-xs font-medium text-sky-700 shadow-[0_1px_2px_rgba(14,165,233,0.06)] hover:bg-sky-500/[0.15] hover:border-sky-400/60 transition-all duration-150 whitespace-nowrap cursor-pointer"
                   >
                     载入到菜单栏
                   </button>
@@ -432,11 +446,11 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
             <button
               type="button"
               onClick={handleCopySwift}
-              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-black/[0.05] hover:text-slate-900 transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1 rounded-xl border border-slate-200/80 bg-white/80 px-2.5 py-1 text-xs font-medium text-slate-600 shadow-[0_1px_2px_rgba(15,23,42,0.03)] hover:bg-white hover:text-slate-900 hover:border-slate-300/80 transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer"
             >
               {copiedSwift ? (
                 <>
-                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  <Check className="w-3.5 h-3.5 text-sky-600" />
                   <span>已复制</span>
                 </>
               ) : (
@@ -449,7 +463,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
             <button
               type="button"
               onClick={handleDownloadSwiftProject}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300/60 bg-sky-500/[0.09] px-3 py-1 text-xs font-medium text-sky-700 shadow-[0_1px_2px_rgba(14,165,233,0.06)] hover:bg-sky-500/[0.15] hover:border-sky-400/60 transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
               <span>下载 {swiftFileTab === 'main' ? 'main.swift' : 'Package.swift'}</span>
@@ -466,16 +480,16 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
               <span aria-hidden="true">·</span>
               <span>零常驻后台进程</span>
               <span aria-hidden="true">·</span>
-              <span>本机 FSEvents 只读读取</span>
+              <span>opencode.db SQLite WAL 只读解析</span>
             </div>
 
-            <div className="inline-flex rounded-lg bg-slate-900/[0.045] p-0.5 font-mono">
+            <div className="inline-flex rounded-xl border border-slate-200/70 bg-slate-100/70 p-0.5 font-mono">
               <button
                 type="button"
                 onClick={() => setSwiftFileTab('main')}
-                className={`rounded-md px-2.5 py-0.5 text-[11px] transition-colors whitespace-nowrap ${
+                className={`rounded-[9px] px-2.5 py-0.5 text-[11px] transition-all whitespace-nowrap cursor-pointer ${
                   swiftFileTab === 'main'
-                    ? 'bg-white text-slate-900 shadow-xs'
+                    ? 'bg-white text-sky-950 font-medium shadow-[0_1px_3px_rgba(15,23,42,0.06)] ring-1 ring-slate-900/[0.04]'
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
@@ -484,9 +498,9 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
               <button
                 type="button"
                 onClick={() => setSwiftFileTab('package')}
-                className={`rounded-md px-2.5 py-0.5 text-[11px] transition-colors whitespace-nowrap ${
+                className={`rounded-[9px] px-2.5 py-0.5 text-[11px] transition-all whitespace-nowrap cursor-pointer ${
                   swiftFileTab === 'package'
-                    ? 'bg-white text-slate-900 shadow-xs'
+                    ? 'bg-white text-sky-950 font-medium shadow-[0_1px_3px_rgba(15,23,42,0.06)] ring-1 ring-slate-900/[0.04]'
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
@@ -528,7 +542,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
         </div>
 
         {/* Minimalist iTerm2 Tab Switcher */}
-        <div className="flex items-center gap-1 rounded-lg bg-slate-900/[0.04] p-0.5 font-mono text-[11px]">
+        <div className="flex items-center gap-0.5 rounded-xl border border-slate-200/70 bg-slate-100/70 p-0.5 font-mono text-[11px]">
           {ITERM_TABS.map((t) => {
             const isTabActive = activeItermIndex === t.index;
             return (
@@ -550,9 +564,9 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
                     }
                   }
                 }}
-                className={`relative rounded-md px-2.5 py-1 transition-colors whitespace-nowrap shrink-0 ${
+                className={`relative rounded-[9px] px-2.5 py-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   isTabActive
-                    ? 'text-slate-900 font-medium'
+                    ? 'text-sky-950 font-medium'
                     : 'text-slate-400 hover:text-slate-700'
                 }`}
               >
@@ -560,7 +574,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
                   <motion.span
                     layoutId="itermTabPill"
                     transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-                    className="absolute inset-0 rounded-md bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06)]"
+                    className="absolute inset-0 rounded-[9px] bg-white shadow-[0_1px_3px_rgba(15,23,42,0.06)] ring-1 ring-slate-900/[0.04]"
                   />
                 )}
                 <span className="relative z-10">⌘{t.index + 1}</span>
@@ -574,16 +588,34 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
       <div className="p-7 space-y-6">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5 min-w-0">
-            <div className="flex items-center gap-2 text-xs text-slate-400">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
               <span>
                 {selectedSubTask
                   ? `子任务 ${selectedSubTask.subagentRole}`
                   : 'Master 会话'}
               </span>
               <span aria-hidden="true">·</span>
+              <span
+                className={`font-mono tabular-nums font-medium ${STATUS_META[activeStatus].textClass}`}
+              >
+                {formatLiveStateTimerLabel(
+                  activeStatus,
+                  activeStateEnteredAt,
+                  nowMs
+                )}
+              </span>
+              <span aria-hidden="true">·</span>
               <span className="font-mono text-slate-500">
                 {selectedSession.modelName.replace('deepseek/', '')}
               </span>
+              {isSelectedSubTaskAutoFocused && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-sky-600 font-medium">
+                    自动聚焦高亮
+                  </span>
+                </>
+              )}
               {lastJumpNotice && (
                 <>
                   <span aria-hidden="true">·</span>
@@ -617,25 +649,35 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
         </div>
 
         {/* Clean Minimalist opencode TUI Stream */}
-        <div className="rounded-xl bg-slate-900/[0.028] p-5 font-mono text-xs leading-relaxed text-slate-700 space-y-1.5">
+        <div
+          className={`rounded-xl p-5 font-mono text-xs leading-relaxed text-slate-700 space-y-1.5 transition-colors duration-150 ${
+            isSelectedSubTaskAutoFocused
+              ? 'animate-focus-border bg-sky-500/[0.06]'
+              : 'border border-transparent bg-slate-900/[0.028]'
+          }`}
+        >
           {activeLogLines.map((line, i) => (
             <div key={i} className="break-all min-h-[1rem]">
               {line}
             </div>
           ))}
-          <div className="pt-3 mt-3 border-t border-black/[0.05] flex items-center justify-between text-[11px] text-slate-400">
-            <span>{selectedSession.localPath}</span>
-            <span>本机只读</span>
+          <div className="pt-3 mt-3 border-t border-black/[0.05] flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
+            <span className="truncate">
+              {selectedSession.localPath} · {activeDbRecordRef}
+            </span>
+            <span className="whitespace-nowrap">
+              SQLITE_OPEN_READONLY · WAL
+            </span>
           </div>
         </div>
 
         {/* Fluid Minimalist 5-State Trigger Bar */}
         <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
           <span className="text-xs text-slate-400">
-            切换状态预览右上角菜单栏 15 FPS 动画
+            切换状态将同步重置当前状态计时器并更新右上角 15 FPS 动画
           </span>
 
-          <div className="inline-flex flex-wrap items-center gap-1 rounded-xl bg-slate-900/[0.04] p-1">
+          <div className="inline-flex flex-wrap items-center gap-0.5 rounded-xl border border-slate-200/70 bg-slate-100/70 p-0.5">
             {(Object.values(AgentStatus) as AgentStatus[]).map((st) => {
               const meta = STATUS_META[st];
               const isCurr = activeStatus === st;
@@ -650,9 +692,9 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
                       selectedSubTask?.id
                     )
                   }
-                  className={`relative inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                  className={`relative inline-flex items-center gap-1.5 rounded-[9px] px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                     isCurr
-                      ? 'text-slate-950'
+                      ? 'text-sky-950'
                       : 'text-slate-500 hover:text-slate-800'
                   }`}
                 >
@@ -660,7 +702,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
                     <motion.span
                       layoutId="fluidStatePill"
                       transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-                      className="absolute inset-0 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.08)]"
+                      className="absolute inset-0 rounded-[9px] bg-white shadow-[0_1px_3px_rgba(15,23,42,0.06)] ring-1 ring-slate-900/[0.04]"
                     />
                   )}
                   <span className="relative z-10 flex items-center gap-1.5">

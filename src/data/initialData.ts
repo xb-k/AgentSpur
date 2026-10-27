@@ -6,6 +6,9 @@ import {
   TargetApp,
   WeeklyEfficiencyPoint,
 } from '../types/agent';
+import { OPENCODE_DB_PATH } from '../utils/opencodeDb';
+
+const BOOT_TS = Date.now();
 
 export const STATUS_META: Record<
   AgentStatus,
@@ -158,18 +161,20 @@ export const INITIAL_SESSIONS: MasterSession[] = [
     engine: 'opencode',
     modelName: 'deepseek/deepseek-reasoner',
     status: AgentStatus.Confirm,
+    stateEnteredAt: BOOT_TS - 7_000,
+    dbRecordRef: "permission(per_8f2a) · status='pending'",
     targetApp: TargetApp.OpenCodeTUI,
     targetRef: 'opencode TUI · ses_8f2a',
     itermTabIndex: 0,
-    localPath: '~/.local/share/opencode/storage/session/ses_8f2a.json',
+    localPath: `${OPENCODE_DB_PATH} · session(ses_8f2a)`,
     updatedAt: '刚刚',
-    summary: '已完成 Gin Context 零分配改造，等待你在 opencode TUI 确认执行基准测试。',
+    summary: '已完成 Gin Context 零分配改造，opencode.db permission 表检测到待确认压测请求。',
     logLines: [
-      'opencode  ses_8f2a · deepseek/deepseek-reasoner',
+      'sqlite> SELECT id, parent_id, time_updated FROM session WHERE id = "ses_8f2a";',
       '',
       '● Master   已重写 internal/middleware/ratelimit.go (0 allocs/op)',
-      '├─ @explore  已扫描 14 个 gin.RouterGroup 路由挂载点',
-      '└─ @general  请求执行: go test -bench=BenchmarkGinRouter ./... ',
+      '├─ @explore  session(ses_8f2a_sub1, parent_id="ses_8f2a") · 扫描 14 个路由挂载点',
+      '└─ @general  permission(per_8f2a) 挂起: go test -bench=BenchmarkGinRouter ./...',
       '',
       '▸ 等待确认  [y] 允许执行   [a] 始终允许   [n] 取消',
     ],
@@ -180,13 +185,15 @@ export const INITIAL_SESSIONS: MasterSession[] = [
         title: '扫描 gin.RouterGroup 路由树依赖',
         subagentRole: '@explore',
         status: AgentStatus.Completed,
+        stateEnteredAt: BOOT_TS - 42_000,
+        dbRecordRef: 'message(msg_104a) · time.completed',
         targetApp: TargetApp.ITerm2,
         targetRef: 'iTerm2 · Tab 2',
         itermTabIndex: 1,
         elapsed: '1.1s',
         localOffset: 'prt_104a',
         logLines: [
-          '$ rg "RouterGroup" internal/server/',
+          'opencode.db -> session(parent_id="ses_8f2a") · part(prt_104a, type="step-finish")',
           'internal/server/http.go:28: v1 := engine.Group("/api/v1")',
           '[@explore] 14 endpoints verified, zero circular middleware.',
         ],
@@ -197,68 +204,76 @@ export const INITIAL_SESSIONS: MasterSession[] = [
         title: '运行 Gin 路由压测脚本确认',
         subagentRole: '@general',
         status: AgentStatus.Confirm,
+        stateEnteredAt: BOOT_TS - 7_000,
+        dbRecordRef: "permission(per_104b) · status='pending'",
         targetApp: TargetApp.OpenCodeTUI,
         targetRef: 'opencode TUI · 主窗口',
         itermTabIndex: 0,
         elapsed: '待确认',
-        localOffset: 'prt_104b',
+        localOffset: 'per_104b',
         logLines: [
+          'opencode.db -> permission(id="per_104b", session_id="ses_8f2a")',
           'Tool request: bash `go test -bench=BenchmarkGinRouter -benchmem ./...`',
-          'Awaiting confirmation in opencode TUI...',
         ],
       },
     ],
   },
   {
     id: 'master-running-02',
-    title: '实现 FSEvents 本机会话只读增量解析',
+    title: '实现 opencode.db WAL 只读状态增量解析',
     engine: 'opencode',
     modelName: 'deepseek/deepseek-chat',
     status: AgentStatus.Working,
+    stateEnteredAt: BOOT_TS - 12_000,
+    dbRecordRef: "part(prt_4c91) · data.type='tool'",
     targetApp: TargetApp.ITerm2,
     targetRef: 'iTerm2 · Tab 1',
     itermTabIndex: 0,
-    localPath: '~/.local/share/opencode/storage/session/ses_4c91.json',
+    localPath: `${OPENCODE_DB_PATH} · session(ses_4c91)`,
     updatedAt: '3秒前',
-    summary: '按需监听 opencode 本地会话目录，构建零后台常驻进程的轻量状态树。',
+    summary: '以 SQLITE_OPEN_READONLY 模式读取 opencode.db，按 project → session → message → part 构建实时状态树。',
     logLines: [
-      'opencode  ses_4c91 · deepseek/deepseek-chat',
+      'opencode  ses_4c91 · deepseek/deepseek-chat · opencode.db (WAL)',
       '',
-      '● Master   正在编写 Sources/AgentSpur/OpenCodeStore.swift',
-      '├─ @general  增量映射 session/ 与 part/ 状态节点 (0.18ms)',
-      '└─ @explore  解析 iTerm2 当前活跃 TTY 会话标识',
+      '● Master   正在编写 Sources/AgentSpur/OpenCodeDBReader.swift',
+      '├─ @general  聚合 session(parent_id) 与 part(time_created) 状态切面 (0.14ms)',
+      '└─ @explore  关联 session.directory 与 iTerm2 活跃 TTY 标签页',
     ],
     subTasks: [
       {
         id: 'sub-02a',
         parentId: 'master-running-02',
-        title: '读取 storage/part 增量偏移',
+        title: '查询 part 表 tool/step-start 时间戳',
         subagentRole: '@general',
         status: AgentStatus.Working,
+        stateEnteredAt: BOOT_TS - 11_000,
+        dbRecordRef: "part(prt_209a) · data.type='tool'",
         targetApp: TargetApp.ITerm2,
         targetRef: 'iTerm2 · Tab 1',
         itermTabIndex: 0,
-        elapsed: '12s',
+        elapsed: '11s',
         localOffset: 'prt_209a',
         logLines: [
-          'Reading ~/.local/share/opencode/storage/part (O_RDONLY)',
-          '12 active state slices parsed in 0.18ms.',
+          'SELECT id, time_created, json_extract(data, "$.type") FROM part WHERE session_id = "ses_4c91";',
+          '12 active part rows parsed via SQLITE_OPEN_READONLY in 0.14ms.',
         ],
       },
       {
         id: 'sub-02b',
         parentId: 'master-running-02',
-        title: '推导 opencode 进程与 iTerm2 标签页映射',
+        title: '推导 session.directory 与 iTerm2 标签映射',
         subagentRole: '@explore',
         status: AgentStatus.Thinking,
+        stateEnteredAt: BOOT_TS - 4_000,
+        dbRecordRef: "part(prt_209b) · data.type='reasoning'",
         targetApp: TargetApp.ITerm2,
         targetRef: 'iTerm2 · Tab 3',
         itermTabIndex: 2,
-        elapsed: '6s',
+        elapsed: '4s',
         localOffset: 'prt_209b',
         logLines: [
-          'Inspecting tty /dev/ttys003 -> iTerm2 Window 1, Tab 3',
-          'Planning instant AppleScript focus jump...',
+          'opencode.db -> part(id="prt_209b", data.type="reasoning")',
+          'Matching project.worktree & tty /dev/ttys003 -> iTerm2 Tab 3...',
         ],
       },
     ],
@@ -269,14 +284,16 @@ export const INITIAL_SESSIONS: MasterSession[] = [
     engine: 'DeepSeek',
     modelName: 'deepseek/deepseek-reasoner',
     status: AgentStatus.Thinking,
+    stateEnteredAt: BOOT_TS - 4_000,
+    dbRecordRef: "part(prt_77a) · data.type='reasoning'",
     targetApp: TargetApp.OpenCodeTUI,
     targetRef: 'opencode TUI · ses_77a',
     itermTabIndex: 1,
-    localPath: '~/.local/share/opencode/storage/session/ses_77a.json',
-    updatedAt: '9秒前',
-    summary: '预生成 5 状态 × 15 帧 Retina 位图序列，菜单栏播放 CPU 占用低于 0.1%。',
+    localPath: `${OPENCODE_DB_PATH} · session(ses_77a)`,
+    updatedAt: '4秒前',
+    summary: '根据 opencode.db reasoning 分片实时驱动 15 FPS 思考涟漪动画，CPU 占用低于 0.1%。',
     logLines: [
-      'opencode  ses_77a · deepseek/deepseek-reasoner',
+      'opencode  ses_77a · deepseek/deepseek-reasoner · part.type="reasoning"',
       '',
       '◌ Thinking  计算 75 帧 36×36px 位图缓存布局 (总计约 388 KB)',
       '└─ @general  校准浅色磨砂菜单栏边缘抗锯齿',
@@ -288,13 +305,15 @@ export const INITIAL_SESSIONS: MasterSession[] = [
         title: '校准 Retina @2x 18pt 渲染锐度',
         subagentRole: '@general',
         status: AgentStatus.Working,
+        stateEnteredAt: BOOT_TS - 8_000,
+        dbRecordRef: "part(prt_311a) · data.type='tool'",
         targetApp: TargetApp.ITerm2,
         targetRef: 'iTerm2 · Tab 2',
         itermTabIndex: 1,
         elapsed: '8s',
         localOffset: 'prt_311a',
         logLines: [
-          'CGContext 36×36px @2x scale verified.',
+          'opencode.db -> part(prt_311a) · CGContext 36×36px @2x verified.',
           'Frame draw latency: 0.06ms / frame @ 15 FPS.',
         ],
       },
@@ -306,16 +325,18 @@ export const INITIAL_SESSIONS: MasterSession[] = [
     engine: 'opencode',
     modelName: 'deepseek/deepseek-chat',
     status: AgentStatus.Completed,
+    stateEnteredAt: BOOT_TS - 304_000,
+    dbRecordRef: 'message(msg_1d08) · time.completed',
     targetApp: TargetApp.ITerm2,
     targetRef: 'iTerm2 · Tab 2',
     itermTabIndex: 1,
-    localPath: '~/.local/share/opencode/storage/session/ses_1d08.json',
+    localPath: `${OPENCODE_DB_PATH} · session(ses_1d08)`,
     updatedAt: '5分钟前',
     duration: '1m 24s',
-    summary: '已完成等宽数字防抖动渲染与静音完成提醒开关。',
+    summary: '聚合 opencode.db session.cost 与 tokens_* 统计，完成等宽数字防抖动渲染。',
     logLines: [
-      '✓ Master   QuotaFormatter.swift 构建通过 (耗时 1m 24s)',
-      '└─ @general  验证 monospacedDigitSystemFont 零位移抖动',
+      '✓ Master   message(msg_1d08) time.completed - time.created = 84,000ms (耗时 1m 24s)',
+      '└─ @general  聚合 session.cost 与 monospacedDigitSystemFont 零位移校验',
     ],
     subTasks: [
       {
@@ -324,12 +345,14 @@ export const INITIAL_SESSIONS: MasterSession[] = [
         title: '菜单栏等宽数字防抖校验',
         subagentRole: '@general',
         status: AgentStatus.Completed,
+        stateEnteredAt: BOOT_TS - 306_000,
+        dbRecordRef: 'message(msg_401a) · time.completed',
         targetApp: TargetApp.ITerm2,
         targetRef: 'iTerm2 · Tab 2',
         itermTabIndex: 1,
         elapsed: '1.8s',
         localOffset: 'prt_401a',
-        logLines: ['Verified 0px horizontal jitter on status item update.'],
+        logLines: ['Verified 0px horizontal jitter on status item update (opencode.db).'],
       },
     ],
   },
@@ -339,15 +362,17 @@ export const INITIAL_SESSIONS: MasterSession[] = [
     engine: 'opencode',
     modelName: 'deepseek/deepseek-reasoner',
     status: AgentStatus.Completed,
+    stateEnteredAt: BOOT_TS - 725_000,
+    dbRecordRef: 'message(msg_09c4) · time.completed',
     targetApp: TargetApp.OpenCodeTUI,
     targetRef: 'opencode TUI · ses_09c4',
     itermTabIndex: 0,
-    localPath: '~/.local/share/opencode/storage/session/ses_09c4.json',
+    localPath: `${OPENCODE_DB_PATH} · session(ses_09c4)`,
     updatedAt: '12分钟前',
     duration: '38s',
-    summary: '完成 gin.Context 响应缓冲池复用，P99 延迟下降 21%。',
+    summary: '完成 gin.Context 响应缓冲池复用，opencode.db 记录总执行耗时 38s。',
     logLines: [
-      '✓ Master   internal/render/json_pool.go 基准校验通过 (耗时 38s)',
+      '✓ Master   message(msg_09c4) completed in 38,000ms (耗时 38s)',
       '└─ @explore  对比 10k 并发下 sync.Pool 内存分配曲线',
     ],
     subTasks: [
@@ -357,6 +382,8 @@ export const INITIAL_SESSIONS: MasterSession[] = [
         title: '采集 sync.Pool 内存分配基准',
         subagentRole: '@explore',
         status: AgentStatus.Completed,
+        stateEnteredAt: BOOT_TS - 730_000,
+        dbRecordRef: 'message(msg_601a) · time.completed',
         targetApp: TargetApp.ITerm2,
         targetRef: 'iTerm2 · Tab 1',
         itermTabIndex: 0,
@@ -368,34 +395,38 @@ export const INITIAL_SESSIONS: MasterSession[] = [
   },
   {
     id: 'master-err-05',
-    title: '校验损坏会话快照隔离机制',
+    title: '校验异常 Tool 调用快照只读隔离机制',
     engine: 'DeepSeek',
     modelName: 'deepseek/deepseek-chat',
     status: AgentStatus.Error,
+    stateEnteredAt: BOOT_TS - 1_082_000,
+    dbRecordRef: "part(prt_err02) · state.status='error'",
     targetApp: TargetApp.ITerm2,
     targetRef: 'iTerm2 · Tab 4',
     itermTabIndex: 3,
-    localPath: '~/.local/share/opencode/storage/session/ses_corrupt_02.json',
+    localPath: `${OPENCODE_DB_PATH} · session(ses_err02)`,
     updatedAt: '18分钟前',
     duration: '0.4s',
-    summary: '检测到归档 JSON 截断，已自动跳过并保持状态栏只读稳定。',
+    summary: 'opencode.db part 表捕获 tool 返回非零退出码，已隔离异常状态并保持只读稳定。',
     logLines: [
-      '✕ Error    Unexpected EOF at ses_corrupt_02.json:4192',
-      '└─ @explore  已隔离异常分片，菜单栏触发 15 FPS 出错提醒',
+      '✕ Error    opencode.db -> part(prt_err02) json_extract(data, "$.state.status") = "error"',
+      '└─ @explore  已记录异常起始时间 time_created，菜单栏触发 15 FPS 出错提醒',
     ],
     subTasks: [
       {
         id: 'sub-05a',
         parentId: 'master-err-05',
-        title: '隔离截断 JSON 分片记录',
+        title: '定位 part 异常退出码记录',
         subagentRole: '@explore',
         status: AgentStatus.Error,
+        stateEnteredAt: BOOT_TS - 1_082_000,
+        dbRecordRef: "part(prt_501a) · state.status='error'",
         targetApp: TargetApp.ITerm2,
         targetRef: 'iTerm2 · Tab 4',
         itermTabIndex: 3,
         elapsed: '0.2s',
-        localOffset: 'byte 4192',
-        logLines: ['Isolated malformed JSON slice cleanly (O_RDONLY).'],
+        localOffset: 'prt_501a',
+        logLines: ['Read part(prt_501a) via SQLITE_OPEN_READONLY without locking WAL.'],
       },
     ],
   },
@@ -412,7 +443,7 @@ export const INITIAL_WEEKLY_EFFICIENCY: WeeklyEfficiencyPoint[] = [
 ];
 
 export const NATIVE_SWIFT_PACKAGE_CODE = `// swift-tools-version: 5.10
-// 极简纯原生 AppKit · 无 WebView · 无常驻后台守护进程
+// 极简纯原生 AppKit + SQLite3 · 无 WebView · 无常驻后台守护进程 · 严格基于 opencode.db 只读解析
 import PackageDescription
 
 let package = Package(
@@ -425,7 +456,8 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("UserNotifications"),
-                .linkedFramework("CoreServices")
+                .linkedFramework("CoreServices"),
+                .linkedLibrary("sqlite3")
             ]
         )
     ]
@@ -433,6 +465,7 @@ let package = Package(
 
 export const NATIVE_SWIFT_APPKIT_CODE = `import AppKit
 import CoreServices
+import SQLite3
 import UserNotifications
 
 enum AgentRunState: String, Codable, CaseIterable {
@@ -441,14 +474,24 @@ enum AgentRunState: String, Codable, CaseIterable {
     case confirm    = "等你确认"
     case completed  = "完成"
     case error      = "出错"
+
+    var livePrefix: String {
+        switch self {
+        case .thinking:  return "正在思考"
+        case .working:   return "正在工作"
+        case .confirm:   return "等你确认"
+        case .completed: return "已完成"
+        case .error:     return "已出错"
+        }
+    }
 }
 
-struct DeepSeekRolePack: Codable {
-    let id: String
-    let name: String
-    let deepseekModel: String
-    let primaryColor: String
-    let customBaseSprite: [String]?
+struct SessionStateRow {
+    let sessionId: String
+    let parentId: String?
+    let title: String
+    var state: AgentRunState
+    var stateEnteredAtMs: Int64 // 严格源自 opencode.db part/permission/session 时间戳，状态切换时自动重置
 }
 
 @main
@@ -456,9 +499,11 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var animTimer: Timer?
     private var frameIndex: Int = 0
-    private var currentState: AgentRunState = .working
+    private var currentState: AgentRunState = .thinking
+    private var stateEnteredAtMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
     private var silentAlertEnabled: Bool = true
     private var quotaText: String = "$24.85 · 04:00"
+    private let dbPath = ("~/.local/share/opencode/opencode.db" as NSString).expandingTildeInPath
 
     static func main() {
         let app = NSApplication.shared
@@ -471,47 +516,62 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         configureMenu()
+        pollOpencodeDbReadOnly()
         start15FPSAnimationLoop()
-        watchOpenCodeStorageReadOnly()
+        watchOpencodeDbWALReadOnly()
+    }
+
+    private func applyState(_ next: AgentRunState, enteredAtMs: Int64? = nil) {
+        if next != currentState {
+            currentState = next
+            // 状态发生切换时，计时自动重置为最新状态进入时间戳
+            stateEnteredAtMs = enteredAtMs ?? Int64(Date().timeIntervalSince1970 * 1000)
+        }
+    }
+
+    private func pollOpencodeDbReadOnly() {
+        var db: OpaquePointer?
+        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
+        guard sqlite3_open_v2(dbPath, &db, flags, nil) == SQLITE_OK else { return }
+        defer { sqlite3_close(db) }
+
+        // 严格依据 opencode.db: project -> session(parent_id) -> message -> part / permission
+        let sql = """
+        SELECT s.id, s.parent_id, s.title, p.time_created, json_extract(p.data, '$.type')
+        FROM session s
+        LEFT JOIN part p ON p.session_id = s.id
+        ORDER BY p.time_created DESC LIMIT 1;
+        """
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                let partTimeMs = sqlite3_column_int64(stmt, 3)
+                let partType = sqlite3_column_text(stmt, 4).map { String(cString: $0) } ?? ""
+                let mapped: AgentRunState = (partType == "reasoning") ? .thinking : .working
+                applyState(mapped, enteredAtMs: partTimeMs > 0 ? partTimeMs : nil)
+            }
+            sqlite3_finalize(stmt)
+        }
     }
 
     private func start15FPSAnimationLoop() {
         animTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 15.0, repeats: true) { [weak self] _ in
             guard let self, let button = self.statusItem.button else { return }
             self.frameIndex = (self.frameIndex + 1) % 15
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let sec = max(0, (nowMs - self.stateEnteredAtMs) / 1000)
             button.image = self.renderStatusFrame(state: self.currentState, frame: self.frameIndex)
             button.imagePosition = .imageLeading
             button.attributedTitle = NSAttributedString(
-                string: " \\(self.currentState.rawValue) · \\(self.quotaText)",
+                string: " \\(self.currentState.livePrefix) \\(sec)s · \\(self.quotaText)",
                 attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)]
             )
         }
         RunLoop.main.add(animTimer!, forMode: .common)
     }
 
-    @objc private func jumpToOpenCodeSession(_ sender: NSMenuItem) {
-        guard let tabIdx = sender.representedObject as? Int else { return }
-        let script = """
-        tell application "iTerm2"
-            activate
-            tell current window to select tab \\(tabIdx)
-        end tell
-        """
-        NSAppleScript(source: script)?.executeAndReturnError(nil)
-    }
-
     @objc private func refreshQuota(_ sender: Any?) {
-        self.quotaText = "$24.85 · 04:00"
-    }
-
-    private func postSilentCompletionBanner(taskTitle: String) {
-        guard silentAlertEnabled else { return }
-        let content = UNMutableNotificationContent()
-        content.title = "AgentSpur · opencode 任务已完成"
-        content.body = taskTitle
-        content.sound = nil
-        let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(req)
+        pollOpencodeDbReadOnly()
     }
 
     private func renderStatusFrame(state: AgentRunState, frame: Int) -> NSImage {
@@ -526,13 +586,13 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate {
 
     private func configureMenu() {
         let menu = NSMenu()
-        let refreshItem = NSMenuItem(title: "刷新额度", action: #selector(refreshQuota(_:)), keyEquivalent: "r")
+        let refreshItem = NSMenuItem(title: "刷新额度与 opencode.db", action: #selector(refreshQuota(_:)), keyEquivalent: "r")
         refreshItem.keyEquivalentModifierMask = [.command]
         menu.addItem(refreshItem)
         statusItem.menu = menu
     }
 
-    private func watchOpenCodeStorageReadOnly() {
-        // FSEventStream 只读监听 ~/.local/share/opencode/storage/session
+    private func watchOpencodeDbWALReadOnly() {
+        // FSEventStream 监听 ~/.local/share/opencode/opencode.db-wal 变化并触发只读增量查询
     }
 }`;

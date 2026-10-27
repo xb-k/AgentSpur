@@ -8,7 +8,9 @@ import {
   SubAgentTask,
 } from '../types/agent';
 import { STATUS_META } from '../data/initialData';
+import { formatLiveStateTimerLabel } from '../utils/opencodeDb';
 import { AgentSpriteCanvas } from './AgentSpriteCanvas';
+import { AgentSpurLogo } from './AgentSpurLogo';
 
 export type DesktopTabMode = 'workspace' | 'character_lab' | 'swift_source';
 
@@ -23,6 +25,7 @@ interface MacMenuBarProps {
   activeDesktopTab: DesktopTabMode;
   onSelectDesktopTab: (tab: DesktopTabMode) => void;
   focusedAppLabel: string;
+  nowMs: number;
 }
 
 export const MacMenuBar: React.FC<MacMenuBarProps> = ({
@@ -35,22 +38,24 @@ export const MacMenuBar: React.FC<MacMenuBarProps> = ({
   isRefreshingQuota,
   activeDesktopTab,
   onSelectDesktopTab,
+  nowMs,
 }) => {
   const [isStatusHovered, setIsStatusHovered] = useState<boolean>(false);
   const statusInfo = STATUS_META[activeStatus];
 
   return (
     <header className="sticky top-0 z-40 flex h-8 w-full items-center justify-between gap-8 border-b border-black/[0.05] bg-white/72 px-5 backdrop-blur-2xl select-none">
-      {/* Zone 1: Minimalist Single-Line Brand Wordmark */}
+      {/* Zone 1: Minimalist Single-Line Brand Wordmark with Custom AgentSpur Logo */}
       <a
         href="#top"
         onClick={(e) => {
           e.preventDefault();
           onSelectDesktopTab('workspace');
         }}
-        className="text-[13px] font-semibold tracking-tight text-slate-900 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
+        className="inline-flex items-center gap-2 text-[13px] font-semibold tracking-tight text-slate-900 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
       >
-         AgentSpur
+        <AgentSpurLogo size={18} />
+        <span>AgentSpur</span>
       </a>
 
       {/* Zone 2: Featherlight Single-Line Nav Links */}
@@ -66,9 +71,9 @@ export const MacMenuBar: React.FC<MacMenuBarProps> = ({
             key={item.id}
             type="button"
             onClick={() => onSelectDesktopTab(item.id)}
-            className={`transition-colors duration-150 whitespace-nowrap shrink-0 hover:text-slate-900 underline-offset-4 ${
+            className={`transition-colors duration-150 whitespace-nowrap shrink-0 hover:text-slate-900 underline-offset-4 cursor-pointer ${
               activeDesktopTab === item.id
-                ? 'text-slate-900 font-semibold underline'
+                ? 'text-slate-900 font-semibold underline decoration-sky-400 decoration-2'
                 : 'text-slate-500'
             }`}
           >
@@ -92,10 +97,10 @@ export const MacMenuBar: React.FC<MacMenuBarProps> = ({
           aria-describedby={
             isStatusHovered && urgentSubTask ? 'menubar-urgent-tooltip' : undefined
           }
-          className={`flex items-center gap-2 rounded-full px-2.5 py-0.5 text-xs transition-colors duration-150 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${
+          className={`flex items-center gap-2 rounded-full border px-2.5 py-0.5 text-xs transition-all duration-150 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50 cursor-pointer ${
             isPopoverOpen
-              ? 'bg-slate-900/[0.07] text-slate-950'
-              : 'hover:bg-slate-900/[0.05] text-slate-800'
+              ? 'border-sky-300/65 bg-sky-50/85 text-slate-900 shadow-[0_1px_3px_rgba(14,165,233,0.08)]'
+              : 'border-slate-200/70 bg-white/75 hover:bg-white hover:border-slate-300/80 text-slate-800 shadow-[0_1px_2px_rgba(15,23,42,0.03)]'
           }`}
         >
           <AgentSpriteCanvas status={activeStatus} pack={activePack} size={18} />
@@ -144,9 +149,14 @@ export const MacMenuBar: React.FC<MacMenuBarProps> = ({
             >
               <div className="flex items-center justify-between gap-3 text-[10px] text-slate-400">
                 <span
-                  className={`font-medium ${STATUS_META[urgentSubTask.status].textClass}`}
+                  className={`font-mono tabular-nums font-medium ${STATUS_META[urgentSubTask.status].textClass}`}
                 >
-                  最急子任务 · {STATUS_META[urgentSubTask.status].label}
+                  最急子任务 ·{' '}
+                  {formatLiveStateTimerLabel(
+                    urgentSubTask.status,
+                    urgentSubTask.stateEnteredAt,
+                    nowMs
+                  )}
                 </span>
                 <span className="font-mono text-slate-500 whitespace-nowrap">
                   {urgentSubTask.targetApp}

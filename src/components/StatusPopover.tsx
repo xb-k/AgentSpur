@@ -9,7 +9,10 @@ import {
   TargetApp,
 } from '../types/agent';
 import { STATUS_META } from '../data/initialData';
+import { formatLiveStateTimerLabel } from '../utils/opencodeDb';
 import { AgentSpriteCanvas } from './AgentSpriteCanvas';
+import { AgentSpurLogo } from './AgentSpurLogo';
+import { FeatherSwitch } from './FeatherSwitch';
 
 type GroupFilter = 'all' | 'pending' | 'running' | 'completed';
 
@@ -28,6 +31,8 @@ interface StatusPopoverProps {
   onImportPackFile: (file: File) => void;
   selectedSessionId: string;
   selectedSubTaskId?: string;
+  autoFocusedSubTaskIds?: ReadonlySet<string>;
+  nowMs: number;
   onJumpToSession: (sessionId: string, subTaskId?: string) => void;
 }
 
@@ -46,6 +51,8 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
   onImportPackFile,
   selectedSessionId,
   selectedSubTaskId,
+  autoFocusedSubTaskIds,
+  nowMs,
   onJumpToSession,
 }) => {
   const [groupFilter, setGroupFilter] = useState<GroupFilter>('all');
@@ -108,6 +115,7 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
                 />
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-900">
+                    <AgentSpurLogo size={15} />
                     <span>AgentSpur</span>
                     <span className="text-slate-300" aria-hidden="true">
                       ·
@@ -115,7 +123,7 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
                     <span className={statusMeta.textClass}>{statusMeta.label}</span>
                   </div>
                   <div className="text-[11px] text-slate-400 tabular-nums">
-                    Master {sessions.length} · 子任务 {activeSubAgents} 活跃 · 15 FPS
+                    opencode.db · Master {sessions.length} · 子任务 {activeSubAgents} 活跃
                   </div>
                 </div>
               </div>
@@ -124,11 +132,11 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
                 type="button"
                 onClick={onRefreshQuota}
                 title="刷新本机额度 (⌘R)"
-                className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-mono text-slate-500 hover:bg-black/[0.05] hover:text-slate-900 transition-colors whitespace-nowrap shrink-0"
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200/80 bg-white/80 px-2 py-0.5 text-[11px] font-mono text-slate-500 shadow-[0_1px_2px_rgba(15,23,42,0.03)] hover:bg-white hover:text-sky-700 hover:border-sky-300/60 transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <RefreshCw
                   className={`w-3 h-3 shrink-0 ${
-                    isRefreshingQuota ? 'animate-spin text-sky-600' : ''
+                    isRefreshingQuota ? 'animate-spin text-sky-500' : ''
                   }`}
                 />
                 <span>⌘R</span>
@@ -151,7 +159,7 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
             <div
               role="tablist"
               aria-label="会话分组筛选"
-              className="grid grid-cols-4 gap-0.5 rounded-lg bg-slate-900/[0.045] p-0.5"
+              className="grid grid-cols-4 gap-0.5 rounded-xl border border-slate-200/70 bg-slate-100/70 p-0.5"
             >
               {(
                 [
@@ -169,9 +177,9 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
                     type="button"
                     aria-selected={active}
                     onClick={() => setGroupFilter(tab.id)}
-                    className={`relative rounded-md py-1 px-1.5 text-[11px] font-medium tabular-nums transition-colors whitespace-nowrap shrink-0 ${
+                    className={`relative rounded-[9px] py-1 px-1.5 text-[11px] font-medium tabular-nums transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                       active
-                        ? 'text-slate-900'
+                        ? 'text-sky-950'
                         : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
@@ -179,7 +187,7 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
                       <motion.span
                         layoutId="popoverGroupTab"
                         transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-                        className="absolute inset-0 rounded-md bg-white shadow-[0_1px_3px_rgba(15,23,42,0.08)]"
+                        className="absolute inset-0 rounded-[9px] bg-white shadow-[0_1px_3px_rgba(15,23,42,0.06)] ring-1 ring-slate-900/[0.04]"
                       />
                     )}
                     <span className="relative z-10">{tab.label}</span>
@@ -239,7 +247,7 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
                                     group.key === 'completed') &&
                                     session.duration && (
                                       <span className="font-mono text-[10px] tabular-nums text-slate-400">
-                                        耗时 {session.duration}
+                                        总耗时 {session.duration}
                                       </span>
                                     )}
                                   <ArrowUpRight className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 group-hover:text-sky-600 shrink-0 transition-opacity" />
@@ -247,7 +255,16 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
                               </div>
 
                               <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-400">
-                                <span className={sMeta.textClass}>{sMeta.label}</span>
+                                <span
+                                  title={`opencode.db · ${session.dbRecordRef}`}
+                                  className={`font-mono tabular-nums whitespace-nowrap shrink-0 ${sMeta.textClass}`}
+                                >
+                                  {formatLiveStateTimerLabel(
+                                    session.status,
+                                    session.stateEnteredAt,
+                                    nowMs
+                                  )}
+                                </span>
                                 <span aria-hidden="true">·</span>
                                 <span className="truncate">{session.targetRef}</span>
                               </div>
@@ -256,11 +273,14 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
 
                           {/* Whisper-light Nested Sub-Agents */}
                           {session.subTasks.length > 0 && (
-                            <div className="ml-4 pl-2.5 border-l border-slate-200/80 space-y-0.5 my-0.5">
+                            <div className="ml-4 pl-2.5 border-l border-slate-200/80 space-y-1 my-1">
                               {session.subTasks.map((sub) => {
                                 const isSubSelected =
                                   selectedSessionId === session.id &&
                                   selectedSubTaskId === sub.id;
+                                const isAutoFocused = Boolean(
+                                  autoFocusedSubTaskIds?.has(sub.id)
+                                );
                                 const subMeta = STATUS_META[sub.status];
 
                                 return (
@@ -270,10 +290,13 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
                                     onClick={() =>
                                       onJumpToSession(session.id, sub.id)
                                     }
+                                    title={`opencode.db · ${sub.dbRecordRef}`}
                                     className={`group w-full text-left rounded-md px-2 py-1 flex items-center gap-1.5 transition-colors duration-150 ${
-                                      isSubSelected
-                                        ? 'bg-sky-500/[0.09] text-slate-950'
-                                        : 'hover:bg-black/[0.03]'
+                                      isAutoFocused
+                                        ? 'animate-focus-border bg-sky-500/[0.12] text-slate-950 font-medium'
+                                        : isSubSelected
+                                        ? 'border border-transparent bg-sky-500/[0.09] text-slate-950'
+                                        : 'border border-transparent hover:bg-black/[0.03]'
                                     }`}
                                   >
                                     <AgentSpriteCanvas
@@ -281,19 +304,29 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
                                       pack={activePack}
                                       size={14}
                                     />
-                                    <span className="min-w-0 flex-1 truncate text-[11px] text-slate-600 group-hover:text-slate-900">
+                                    <span
+                                      className={`min-w-0 flex-1 truncate text-[11px] ${
+                                        isAutoFocused
+                                          ? 'text-sky-950 font-semibold'
+                                          : 'text-slate-600 group-hover:text-slate-900'
+                                      }`}
+                                    >
                                       {sub.title}
                                     </span>
                                     {(sub.status === AgentStatus.Completed ||
                                       group.key === 'completed') && (
                                       <span className="font-mono text-[10px] tabular-nums text-slate-400 shrink-0 whitespace-nowrap">
-                                        {sub.elapsed}
+                                        耗时 {sub.elapsed}
                                       </span>
                                     )}
                                     <span
-                                      className={`text-[10px] shrink-0 whitespace-nowrap ${subMeta.textClass}`}
+                                      className={`font-mono tabular-nums text-[10px] shrink-0 whitespace-nowrap ${subMeta.textClass}`}
                                     >
-                                      {subMeta.label}
+                                      {formatLiveStateTimerLabel(
+                                        sub.status,
+                                        sub.stateEnteredAt,
+                                        nowMs
+                                      )}
                                     </span>
                                     <span className="text-[10px] font-mono text-slate-400 group-hover:text-sky-600 shrink-0 whitespace-nowrap">
                                       {sub.targetApp === TargetApp.OpenCodeTUI
@@ -316,37 +349,34 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
 
           {/* Ultra-Minimal Single-Zone Preferences Footer */}
           <div className="border-t border-black/[0.05] px-3.5 py-2.5 flex items-center justify-between gap-2 text-[11px]">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={silentAlertEnabled}
-              onClick={onToggleSilentAlert}
-              title="任务跑完弹出静音通知，可随时关闭"
-              className={`inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium transition-colors whitespace-nowrap shrink-0 ${
-                silentAlertEnabled
-                  ? 'text-emerald-700 bg-emerald-500/10 hover:bg-emerald-500/15'
-                  : 'text-slate-400 hover:bg-black/[0.04] hover:text-slate-700'
-              }`}
-            >
-              {silentAlertEnabled ? (
-                <>
-                  <BellOff className="w-3 h-3 shrink-0" />
-                  <span>静音通知</span>
-                </>
-              ) : (
-                <>
-                  <Bell className="w-3 h-3 shrink-0 opacity-60" />
-                  <span>通知已关</span>
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <FeatherSwitch
+                size="sm"
+                checked={silentAlertEnabled}
+                onChange={onToggleSilentAlert}
+                ariaLabel="切换任务完成静音通知"
+                title="任务跑完弹出静音通知，可随时关闭"
+              />
+              <span
+                className={`inline-flex items-center gap-1 font-medium transition-colors whitespace-nowrap ${
+                  silentAlertEnabled ? 'text-slate-700' : 'text-slate-400'
+                }`}
+              >
+                {silentAlertEnabled ? (
+                  <BellOff className="w-3 h-3 text-sky-500 shrink-0" />
+                ) : (
+                  <Bell className="w-3 h-3 opacity-60 shrink-0" />
+                )}
+                <span>静音通知</span>
+              </span>
+            </div>
 
-            <div className="flex items-center gap-1 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
               <select
                 aria-label="切换 DeepSeek 角色包"
                 value={activePack.id}
                 onChange={(e) => onSelectPack(e.target.value)}
-                className="max-w-[132px] truncate rounded-md bg-black/[0.04] hover:bg-black/[0.07] px-2 py-1 text-[11px] font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 transition-colors cursor-pointer"
+                className="max-w-[126px] truncate rounded-lg border border-slate-200/80 bg-white/80 hover:bg-white hover:border-sky-300/60 px-2 py-1 text-[11px] font-medium text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.03)] focus:outline-none focus:ring-2 focus:ring-sky-400/30 transition-all cursor-pointer"
               >
                 {packs.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -373,7 +403,7 @@ export const StatusPopover: React.FC<StatusPopoverProps> = ({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 title="导入自制 DeepSeek 角色包 (.json)"
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium text-slate-600 hover:bg-black/[0.05] hover:text-slate-900 transition-colors whitespace-nowrap shrink-0"
+                className="inline-flex items-center gap-1 rounded-lg border border-sky-300/55 bg-sky-500/[0.08] px-2 py-1 font-medium text-sky-700 shadow-[0_1px_2px_rgba(14,165,233,0.05)] hover:bg-sky-500/[0.14] hover:border-sky-400/60 transition-all duration-150 whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <FolderOpen className="w-3 h-3 shrink-0" />
                 <span>导入</span>

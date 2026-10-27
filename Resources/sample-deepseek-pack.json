@@ -1,0 +1,25 @@
+{
+  "id": "custom-deepseek-gin-sprite",
+  "name": "自制微星精灵",
+  "author": "Local Mac User",
+  "version": "1.0.0",
+  "deepseekModel": "deepseek/deepseek-reasoner",
+  "roleDescription": "本地 JSON 导入的极简 12x12 点阵角色包。",
+  "archetype": "custom_pixel",
+  "primaryColor": "#334155",
+  "secondaryColor": "#0EA5E9",
+  "customBaseSprite": [
+    "....####....",
+    "..########..",
+    ".##########.",
+    ".###+##+###.",
+    ".###+##+###.",
+    ".##########.",
+    "..########..",
+    "...######...",
+    "....####....",
+    "............",
+    "............",
+    "............"
+  ]
+}

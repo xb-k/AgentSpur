@@ -1,502 +1,307 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import wallpaperUrl from './assets/images/macos_light_daylight_wallpaper_1793088180493.jpg';
-import {
-  AgentStatus,
-  CharacterPack,
-  MasterSession,
-  QuotaState,
-  SilentToastItem,
-  SubAgentTask,
-} from './types/agent';
-import {
-  BUILTIN_CHARACTER_PACKS,
-  INITIAL_QUOTA,
-  INITIAL_SESSIONS,
-  INITIAL_WEEKLY_EFFICIENCY,
-} from './data/initialData';
-import { DesktopTabMode, MacMenuBar } from './components/MacMenuBar';
-import { StatusPopover } from './components/StatusPopover';
-import { DesktopWorkspace } from './components/DesktopWorkspace';
-import { SilentNotificationBanner } from './components/SilentNotificationBanner';
-import { WeeklyEfficiencyChart } from './components/WeeklyEfficiencyChart';
+import React, { useMemo, useState } from 'react';
+import { Check, Copy, Download, FileCode2, FolderArchive, Terminal } from 'lucide-react';
+import { AgentSpurLogo } from './components/AgentSpurLogo';
+import { buildMacOSZipBlob, ZipFileEntry } from './utils/zipBuilder';
 
-const STORAGE_PACKS_KEY = 'agentbar_custom_packs_gin_v3';
-const STORAGE_ACTIVE_PACK_KEY = 'agentbar_active_pack_gin_v3';
-const STORAGE_SILENT_ALERT_KEY = 'agentbar_silent_alert_gin_v3';
+import packageSwiftRaw from '../Package.swift?raw';
+import buildDmgShRaw from '../build_dmg.sh?raw';
+import doubleClickCmdRaw from '../双击打包DMG.command?raw';
+import makefileRaw from '../Makefile?raw';
+import readmeRaw from '../README.md?raw';
+import infoPlistRaw from '../Resources/Info.plist?raw';
+import samplePackJsonRaw from '../Resources/sample-deepseek-pack.json?raw';
+import mainSwiftRaw from '../Sources/AgentSpur/main.swift?raw';
+import modelsSwiftRaw from '../Sources/AgentSpur/Models.swift?raw';
+import dbReaderSwiftRaw from '../Sources/AgentSpur/OpenCodeDBReader.swift?raw';
+import spriteRendererSwiftRaw from '../Sources/AgentSpur/SpriteRenderer.swift?raw';
+import terminalBridgeSwiftRaw from '../Sources/AgentSpur/TerminalBridge.swift?raw';
+import popoverViewsSwiftRaw from '../Sources/AgentSpur/PopoverViews.swift?raw';
+
+interface SourceFileItem {
+  relPath: string;
+  label: string;
+  content: string;
+  executable?: boolean;
+}
+
+const NATIVE_FILES: SourceFileItem[] = [
+  {
+    relPath: 'build_dmg.sh',
+    label: 'build_dmg.sh (一键生成 DMG)',
+    content: buildDmgShRaw,
+    executable: true,
+  },
+  {
+    relPath: '双击打包DMG.command',
+    label: '双击打包DMG.command',
+    content: doubleClickCmdRaw,
+    executable: true,
+  },
+  {
+    relPath: 'Package.swift',
+    label: 'Package.swift',
+    content: packageSwiftRaw,
+  },
+  {
+    relPath: 'Sources/AgentSpur/main.swift',
+    label: 'Sources/AgentSpur/main.swift',
+    content: mainSwiftRaw,
+  },
+  {
+    relPath: 'Sources/AgentSpur/PopoverViews.swift',
+    label: 'Sources/AgentSpur/PopoverViews.swift',
+    content: popoverViewsSwiftRaw,
+  },
+  {
+    relPath: 'Sources/AgentSpur/OpenCodeDBReader.swift',
+    label: 'Sources/AgentSpur/OpenCodeDBReader.swift',
+    content: dbReaderSwiftRaw,
+  },
+  {
+    relPath: 'Sources/AgentSpur/SpriteRenderer.swift',
+    label: 'Sources/AgentSpur/SpriteRenderer.swift',
+    content: spriteRendererSwiftRaw,
+  },
+  {
+    relPath: 'Sources/AgentSpur/TerminalBridge.swift',
+    label: 'Sources/AgentSpur/TerminalBridge.swift',
+    content: terminalBridgeSwiftRaw,
+  },
+  {
+    relPath: 'Sources/AgentSpur/Models.swift',
+    label: 'Sources/AgentSpur/Models.swift',
+    content: modelsSwiftRaw,
+  },
+  {
+    relPath: 'Resources/Info.plist',
+    label: 'Resources/Info.plist',
+    content: infoPlistRaw,
+  },
+  {
+    relPath: 'Resources/sample-deepseek-pack.json',
+    label: 'Resources/sample-deepseek-pack.json',
+    content: samplePackJsonRaw,
+  },
+  {
+    relPath: 'Makefile',
+    label: 'Makefile',
+    content: makefileRaw,
+  },
+  {
+    relPath: 'README.md',
+    label: 'README.md',
+    content: readmeRaw,
+  },
+];
 
 export default function App() {
-  const [sessions, setSessions] = useState<MasterSession[]>(INITIAL_SESSIONS);
-  const [quota, setQuota] = useState<QuotaState>(INITIAL_QUOTA);
-  const [isRefreshingQuota, setIsRefreshingQuota] = useState<boolean>(false);
-  const [isPopoverOpen, setIsPopoverOpen] = useState<boolean>(true);
-  const [activeDesktopTab, setActiveDesktopTab] =
-    useState<DesktopTabMode>('workspace');
+  const [selectedPath, setSelectedPath] = useState<string>('build_dmg.sh');
+  const [copiedCmd, setCopiedCmd] = useState<boolean>(false);
+  const [copiedFile, setCopiedFile] = useState<boolean>(false);
 
-  const [selectedSessionId, setSelectedSessionId] = useState<string>(
-    INITIAL_SESSIONS[0].id
+  const selectedFile = useMemo(
+    () => NATIVE_FILES.find((f) => f.relPath === selectedPath) ?? NATIVE_FILES[0],
+    [selectedPath]
   );
-  const [selectedSubTaskId, setSelectedSubTaskId] = useState<string | undefined>(
-    undefined
-  );
-  const [menuBarFocusStatus, setMenuBarFocusStatus] = useState<AgentStatus | null>(
-    null
-  );
-  const [lastJumpNotice, setLastJumpNotice] = useState<string | null>(null);
-  const [importFeedback, setImportFeedback] = useState<string | null>(null);
-  const [wallpaperFailed, setWallpaperFailed] = useState<boolean>(false);
 
-  const [silentAlertEnabled, setSilentAlertEnabled] = useState<boolean>(() => {
+  const handleDownloadNativeZip = () => {
+    const entries: ZipFileEntry[] = NATIVE_FILES.map((f) => ({
+      path: `AgentSpur/${f.relPath}`,
+      content: f.content,
+      executable: f.executable,
+    }));
+    const blob = buildMacOSZipBlob(entries);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'AgentSpur-macOS-Native.zip';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopyCommand = async () => {
     try {
-      const saved = localStorage.getItem(STORAGE_SILENT_ALERT_KEY);
-      return saved === null ? true : saved === 'true';
+      await navigator.clipboard.writeText('chmod +x build_dmg.sh && ./build_dmg.sh');
+      setCopiedCmd(true);
+      window.setTimeout(() => setCopiedCmd(false), 1600);
     } catch {
-      return true;
+      // Ignore clipboard fallback
     }
-  });
+  };
 
-  const [toasts, setToasts] = useState<SilentToastItem[]>([]);
-
-  const [customPacks, setCustomPacks] = useState<CharacterPack[]>(() => {
+  const handleCopyCurrentFile = async () => {
     try {
-      const raw = localStorage.getItem(STORAGE_PACKS_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
+      await navigator.clipboard.writeText(selectedFile.content);
+      setCopiedFile(true);
+      window.setTimeout(() => setCopiedFile(false), 1600);
     } catch {
-      return [];
+      // Ignore clipboard fallback
     }
-  });
-
-  const allPacks = useMemo(
-    () => [...BUILTIN_CHARACTER_PACKS, ...customPacks],
-    [customPacks]
-  );
-
-  const [activePackId, setActivePackId] = useState<string>(() => {
-    try {
-      return (
-        localStorage.getItem(STORAGE_ACTIVE_PACK_KEY) ||
-        BUILTIN_CHARACTER_PACKS[0].id
-      );
-    } catch {
-      return BUILTIN_CHARACTER_PACKS[0].id;
-    }
-  });
-
-  const activePack = useMemo(
-    () => allPacks.find((p) => p.id === activePackId) || BUILTIN_CHARACTER_PACKS[0],
-    [allPacks, activePackId]
-  );
-
-  const derivedMenuBarStatus = useMemo<AgentStatus>(() => {
-    if (menuBarFocusStatus) return menuBarFocusStatus;
-    if (sessions.some((s) => s.status === AgentStatus.Confirm)) {
-      return AgentStatus.Confirm;
-    }
-    if (sessions.some((s) => s.status === AgentStatus.Working)) {
-      return AgentStatus.Working;
-    }
-    if (sessions.some((s) => s.status === AgentStatus.Thinking)) {
-      return AgentStatus.Thinking;
-    }
-    if (sessions.some((s) => s.status === AgentStatus.Error)) {
-      return AgentStatus.Error;
-    }
-    return AgentStatus.Completed;
-  }, [menuBarFocusStatus, sessions]);
-
-  const urgentSubTask = useMemo<SubAgentTask | undefined>(() => {
-    const priorityMap: Record<AgentStatus, number> = {
-      [AgentStatus.Confirm]: 1,
-      [AgentStatus.Error]: menuBarFocusStatus === AgentStatus.Error ? 0 : 2,
-      [AgentStatus.Working]: 3,
-      [AgentStatus.Thinking]: 4,
-      [AgentStatus.Completed]: 5,
-    };
-    const allSubs = sessions.flatMap((s) => s.subTasks);
-    if (allSubs.length === 0) return undefined;
-    return [...allSubs].sort(
-      (a, b) => priorityMap[a.status] - priorityMap[b.status]
-    )[0];
-  }, [sessions, menuBarFocusStatus]);
-
-  const selectedSession = useMemo(
-    () => sessions.find((s) => s.id === selectedSessionId) || sessions[0],
-    [sessions, selectedSessionId]
-  );
-
-  const selectedSubTask = useMemo(
-    () =>
-      selectedSubTaskId
-        ? selectedSession.subTasks.find((st) => st.id === selectedSubTaskId)
-        : undefined,
-    [selectedSession, selectedSubTaskId]
-  );
-
-  const focusedAppLabel = useMemo(() => {
-    if (activeDesktopTab === 'character_lab') return 'AgentSpur';
-    if (activeDesktopTab === 'swift_source') return 'Xcode';
-    const app = selectedSubTask
-      ? selectedSubTask.targetApp
-      : selectedSession.targetApp;
-    return app;
-  }, [activeDesktopTab, selectedSession, selectedSubTask]);
-
-  const handleRefreshQuota = useCallback(() => {
-    setIsRefreshingQuota(true);
-    const now = new Date();
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-
-    window.setTimeout(() => {
-      setQuota((prev) => ({
-        ...prev,
-        remainingUsd: Math.max(
-          0.5,
-          Number((prev.remainingUsd - 0.02).toFixed(2))
-        ),
-        lastRefreshedAt: `${hh}:${mm}`,
-      }));
-      setIsRefreshingQuota(false);
-    }, 200);
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'r') {
-        e.preventDefault();
-        handleRefreshQuota();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleRefreshQuota]);
-
-  const handleToggleSilentAlert = useCallback(() => {
-    setSilentAlertEnabled((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(STORAGE_SILENT_ALERT_KEY, String(next));
-      } catch {
-        // Ignore storage error
-      }
-      return next;
-    });
-  }, []);
-
-  const handleSelectPack = useCallback((packId: string) => {
-    setActivePackId(packId);
-    try {
-      localStorage.setItem(STORAGE_ACTIVE_PACK_KEY, packId);
-    } catch {
-      // Ignore storage error
-    }
-  }, []);
-
-  const handleImportPackObject = useCallback((newPack: CharacterPack) => {
-    setCustomPacks((prev) => {
-      const filtered = prev.filter((p) => p.id !== newPack.id);
-      const updated = [...filtered, newPack];
-      try {
-        localStorage.setItem(STORAGE_PACKS_KEY, JSON.stringify(updated));
-        localStorage.setItem(STORAGE_ACTIVE_PACK_KEY, newPack.id);
-      } catch {
-        // Ignore storage error
-      }
-      return updated;
-    });
-    setActivePackId(newPack.id);
-    setImportFeedback(`已切换角色：${newPack.name}`);
-    window.setTimeout(() => setImportFeedback(null), 2600);
-  }, []);
-
-  const handleImportPackFile = useCallback(
-    (file: File) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const parsed = JSON.parse(String(reader.result || '{}'));
-          const importedPack: CharacterPack = {
-            id:
-              typeof parsed.id === 'string' && parsed.id.trim()
-                ? parsed.id.trim()
-                : `imported-${Date.now()}`,
-            name:
-              typeof parsed.name === 'string' && parsed.name.trim()
-                ? parsed.name.trim()
-                : file.name.replace(/\.json$/i, ''),
-            author:
-              typeof parsed.author === 'string' ? parsed.author : 'Local Mac',
-            version:
-              typeof parsed.version === 'string' ? parsed.version : '1.0.0',
-            deepseekModel:
-              typeof parsed.deepseekModel === 'string'
-                ? parsed.deepseekModel
-                : 'deepseek/deepseek-reasoner',
-            roleDescription:
-              typeof parsed.roleDescription === 'string'
-                ? parsed.roleDescription
-                : '从本地 JSON 导入的极简角色包。',
-            archetype:
-              parsed.archetype === 'droplet' ||
-              parsed.archetype === 'glyph' ||
-              parsed.archetype === 'whale' ||
-              parsed.archetype === 'neko' ||
-              parsed.archetype === 'kitsune' ||
-              parsed.archetype === 'custom_pixel'
-                ? parsed.archetype
-                : 'custom_pixel',
-            primaryColor:
-              typeof parsed.primaryColor === 'string'
-                ? parsed.primaryColor
-                : '#0F172A',
-            secondaryColor:
-              typeof parsed.secondaryColor === 'string'
-                ? parsed.secondaryColor
-                : '#0EA5E9',
-            customBaseSprite: Array.isArray(parsed.customBaseSprite)
-              ? parsed.customBaseSprite
-              : undefined,
-          };
-          handleImportPackObject(importedPack);
-        } catch {
-          setImportFeedback('角色包 JSON 解析失败');
-          window.setTimeout(() => setImportFeedback(null), 3000);
-        }
-      };
-      reader.readAsText(file);
-    },
-    [handleImportPackObject]
-  );
-
-  const handleJumpToSession = useCallback(
-    (sessionId: string, subTaskId?: string) => {
-      const targetSession = sessions.find((s) => s.id === sessionId);
-      if (!targetSession) return;
-      const targetSub = subTaskId
-        ? targetSession.subTasks.find((st) => st.id === subTaskId)
-        : undefined;
-
-      setSelectedSessionId(sessionId);
-      setSelectedSubTaskId(subTaskId);
-      setActiveDesktopTab('workspace');
-
-      const destLabel = targetSub ? targetSub.targetRef : targetSession.targetRef;
-      const nextSt = targetSub ? targetSub.status : targetSession.status;
-      setMenuBarFocusStatus(nextSt);
-      setLastJumpNotice(`已跳回 ${destLabel}`);
-      window.setTimeout(() => setLastJumpNotice(null), 2200);
-    },
-    [sessions]
-  );
-
-  const pushSilentCompletionToast = useCallback(
-    (
-      title: string,
-      targetSession: MasterSession,
-      subId?: string,
-      targetRefOverride?: string
-    ) => {
-      if (!silentAlertEnabled) return;
-      const now = new Date();
-      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(
-        now.getMinutes()
-      ).padStart(2, '0')}`;
-      const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      const item: SilentToastItem = {
-        id,
-        sessionTitle: title,
-        targetApp: targetSession.targetApp,
-        targetRef: targetRefOverride || targetSession.targetRef,
-        sessionId: targetSession.id,
-        subTaskId: subId,
-        timestamp: timeStr,
-      };
-      setToasts((prev) => [item, ...prev].slice(0, 3));
-      window.setTimeout(() => {
-        setToasts((prev) => prev.filter((t) => t.id !== id));
-      }, 5000);
-    },
-    [silentAlertEnabled]
-  );
-
-  const handleUpdateSessionStatus = useCallback(
-    (sessionId: string, nextStatus: AgentStatus, subTaskId?: string) => {
-      setMenuBarFocusStatus(nextStatus);
-
-      setSessions((prev) =>
-        prev.map((s) => {
-          if (s.id !== sessionId) return s;
-
-          if (subTaskId) {
-            const targetSub = s.subTasks.find((st) => st.id === subTaskId);
-            if (
-              targetSub &&
-              targetSub.status !== AgentStatus.Completed &&
-              nextStatus === AgentStatus.Completed
-            ) {
-              pushSilentCompletionToast(
-                targetSub.title,
-                s,
-                targetSub.id,
-                targetSub.targetRef
-              );
-            }
-            return {
-              ...s,
-              updatedAt: '刚刚',
-              subTasks: s.subTasks.map((st) =>
-                st.id === subTaskId
-                  ? {
-                      ...st,
-                      status: nextStatus,
-                      elapsed:
-                        nextStatus === AgentStatus.Completed &&
-                        st.elapsed === '待确认'
-                          ? '1.6s'
-                          : st.elapsed,
-                    }
-                  : st
-              ),
-            };
-          }
-
-          if (
-            s.status !== AgentStatus.Completed &&
-            nextStatus === AgentStatus.Completed
-          ) {
-            pushSilentCompletionToast(s.title, s);
-          }
-
-          return {
-            ...s,
-            status: nextStatus,
-            updatedAt: '刚刚',
-            duration:
-              nextStatus === AgentStatus.Completed
-                ? s.duration || '48s'
-                : s.duration,
-          };
-        })
-      );
-    },
-    [pushSilentCompletionToast]
-  );
-
-  const weeklyEfficiencyData = useMemo(() => {
-    const extraCompleted = Math.max(
-      0,
-      sessions.filter((s) => s.status === AgentStatus.Completed).length - 2
-    );
-    return INITIAL_WEEKLY_EFFICIENCY.map((pt) =>
-      pt.isToday
-        ? {
-            ...pt,
-            completedCount: pt.completedCount + extraCompleted,
-            tasksPerHour: Number(
-              (pt.tasksPerHour + extraCompleted * 0.4).toFixed(1)
-            ),
-            avgSeconds: Math.max(24, pt.avgSeconds - extraCompleted * 2),
-          }
-        : pt
-    );
-  }, [sessions]);
-
-  const handleDismissToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+  };
 
   return (
-    <div
-      id="top"
-      className="relative min-h-screen w-full bg-[#F8FAFC] text-slate-900 flex flex-col"
-    >
-      {/* Featherlight Sunlit Daylight Backdrop */}
-      <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden bg-gradient-to-br from-white via-slate-50 to-sky-50/40">
-        {!wallpaperFailed && (
-          <img
-            src={wallpaperUrl}
-            alt="macOS 明亮极简桌面背景"
-            referrerPolicy="no-referrer"
-            onError={() => setWallpaperFailed(true)}
-            className="h-full w-full object-cover opacity-65"
-          />
-        )}
-        <div className="absolute inset-0 bg-white/45" />
-      </div>
+    <div className="min-h-screen w-full bg-gradient-to-br from-white via-[#F8FAFC] to-sky-50/50 text-slate-900">
+      <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-white/80 backdrop-blur-2xl">
+        <div className="mx-auto flex h-14 max-w-[1160px] items-center justify-between gap-4 px-6">
+          <div className="flex items-center gap-2.5">
+            <AgentSpurLogo size={24} />
+            <span className="text-sm font-semibold tracking-tight text-slate-900">
+              AgentSpur
+            </span>
+            <span className="text-slate-300" aria-hidden="true">
+              ·
+            </span>
+            <span className="text-xs text-slate-500">
+              纯原生 macOS AppKit 菜单栏工程 (无任何 Web 依赖)
+            </span>
+          </div>
 
-      {/* Featherlight macOS Menu Bar */}
-      <MacMenuBar
-        activeStatus={derivedMenuBarStatus}
-        activePack={activePack}
-        quota={quota}
-        urgentSubTask={urgentSubTask}
-        isPopoverOpen={isPopoverOpen}
-        onTogglePopover={() => setIsPopoverOpen((v) => !v)}
-        isRefreshingQuota={isRefreshingQuota}
-        activeDesktopTab={activeDesktopTab}
-        onSelectDesktopTab={setActiveDesktopTab}
-        focusedAppLabel={focusedAppLabel}
-      />
-
-      {/* Minimalist Silent Completion Notification */}
-      <SilentNotificationBanner
-        toasts={toasts}
-        activePack={activePack}
-        onJump={handleJumpToSession}
-        onDismiss={handleDismissToast}
-      />
-
-      {/* Subtle Role Switch Feedback */}
-      {importFeedback && (
-        <div className="fixed bottom-5 right-5 z-50 rounded-full border border-black/[0.06] bg-white/90 px-3.5 py-1.5 text-xs font-medium text-slate-700 shadow-md backdrop-blur-2xl">
-          {importFeedback}
+          <button
+            type="button"
+            onClick={handleDownloadNativeZip}
+            className="inline-flex items-center gap-2 rounded-xl border border-sky-300/70 bg-sky-500/[0.11] px-4 py-2 text-xs font-semibold text-sky-800 shadow-[0_1px_2px_rgba(14,165,233,0.08)] hover:bg-sky-500/[0.18] hover:border-sky-400/70 transition-all cursor-pointer whitespace-nowrap shrink-0"
+          >
+            <FolderArchive className="w-4 h-4 text-sky-600 shrink-0" />
+            <span>下载纯 macOS 原生源码包 (.zip)</span>
+          </button>
         </div>
-      )}
+      </header>
 
-      {/* Airy Minimalist Desktop Canvas */}
-      <main className="relative z-10 mx-auto flex w-full max-w-[1380px] flex-1 flex-col gap-6 px-6 py-7">
-        <div className="flex w-full flex-col-reverse lg:flex-row items-start gap-7">
-          <DesktopWorkspace
-            activeTab={activeDesktopTab}
-            onChangeTab={setActiveDesktopTab}
-            sessions={sessions}
-            selectedSession={selectedSession}
-            selectedSubTask={selectedSubTask}
-            lastJumpNotice={lastJumpNotice}
-            activePack={activePack}
-            packs={allPacks}
-            onSelectPack={handleSelectPack}
-            onImportPackObject={handleImportPackObject}
-            onImportPackFile={handleImportPackFile}
-            onUpdateSessionStatus={handleUpdateSessionStatus}
-            onSelectSessionFromDesktop={(sId, subId) => {
-              setSelectedSessionId(sId);
-              setSelectedSubTaskId(subId);
-            }}
-          />
+      <main className="mx-auto max-w-[1160px] space-y-8 px-6 py-10">
+        {/* Hero & One-Command DMG Packaging Flow */}
+        <section className="rounded-2xl border border-slate-200/75 bg-white/85 p-8 shadow-[0_20px_50px_-18px_rgba(15,23,42,0.07)] backdrop-blur-2xl space-y-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="space-y-2 max-w-2xl">
+              <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
+                <span>macOS 14.0+</span>
+                <span aria-hidden="true">·</span>
+                <span>AppKit + SQLite3 + FSEvents</span>
+                <span aria-hidden="true">·</span>
+                <span>LSUIElement 纯菜单栏</span>
+              </div>
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-900 text-balance">
+                下载源码后在 Mac 上一键打包生成 AgentSpur.dmg
+              </h1>
+              <p className="text-sm leading-relaxed text-slate-600">
+                点击右上角下载 <code className="font-mono text-xs text-sky-700">AgentSpur-macOS-Native.zip</code>（仅包含纯净 Swift 原生源码、Info.plist 与 DMG 打包脚本，已剔除全部前端文件），在 Mac 上解压后直接双击{' '}
+                <code className="font-mono text-xs text-slate-800">双击打包DMG.command</code> 或执行下方命令，即可自动生成带专属冰瓷图标与拖拽安装入口的{' '}
+                <code className="font-mono text-xs text-slate-800">AgentSpur.dmg</code>。
+              </p>
+            </div>
 
-          <StatusPopover
-            isOpen={isPopoverOpen}
-            activeStatus={derivedMenuBarStatus}
-            sessions={sessions}
-            quota={quota}
-            isRefreshingQuota={isRefreshingQuota}
-            onRefreshQuota={handleRefreshQuota}
-            silentAlertEnabled={silentAlertEnabled}
-            onToggleSilentAlert={handleToggleSilentAlert}
-            packs={allPacks}
-            activePack={activePack}
-            onSelectPack={handleSelectPack}
-            onImportPackFile={handleImportPackFile}
-            selectedSessionId={selectedSessionId}
-            selectedSubTaskId={selectedSubTaskId}
-            onJumpToSession={handleJumpToSession}
-          />
-        </div>
+            <div className="shrink-0">
+              <button
+                type="button"
+                onClick={handleDownloadNativeZip}
+                className="inline-flex items-center gap-2 rounded-xl border border-sky-300/75 bg-sky-500/[0.12] px-5 py-3 text-sm font-semibold text-sky-800 shadow-[0_2px_8px_rgba(14,165,233,0.10)] hover:bg-sky-500/[0.18] hover:border-sky-400/80 transition-all cursor-pointer whitespace-nowrap"
+              >
+                <Download className="w-4 h-4 text-sky-600 shrink-0" />
+                <span>一键下载 AgentSpur-macOS-Native.zip</span>
+              </button>
+            </div>
+          </div>
 
-        {/* Bottom D3.js Weekly Task Processing Efficiency Line Chart */}
-        <WeeklyEfficiencyChart data={weeklyEfficiencyData} />
+          <div className="pt-4 border-t border-slate-200/70 grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
+            <div className="space-y-1.5">
+              <div className="font-semibold text-slate-800">01. 解压纯净原生包</div>
+              <p className="text-slate-500 leading-relaxed">
+                解压得到 <code className="font-mono">AgentSpur/</code> 目录（内含 <code className="font-mono">Package.swift</code>、<code className="font-mono">Sources/</code>、<code className="font-mono">Resources/Info.plist</code> 与打包脚本，已预设可执行权限）。
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <div className="font-semibold text-slate-800">02. 双击或一行命令构建</div>
+              <p className="text-slate-500 leading-relaxed">
+                在访达中直接双击 <code className="font-mono">双击打包DMG.command</code>，或在终端执行下方脚本，自动编译 Release 二进制、合成 <code className="font-mono">.icns</code> 图标并完成本地签名。
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <div className="font-semibold text-slate-800">03. 拖入 Applications 使用</div>
+              <p className="text-slate-500 leading-relaxed">
+                自动弹出生成的 <code className="font-mono">AgentSpur.dmg</code>，打开后拖入 <code className="font-mono">Applications</code> 即可在顶部状态栏只读监听本机 <code className="font-mono">opencode.db</code>。
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-slate-50/90 px-4 py-3 font-mono text-xs text-slate-800">
+            <div className="flex items-center gap-2.5 min-w-0 truncate">
+              <Terminal className="w-4 h-4 text-sky-600 shrink-0" />
+              <span className="truncate">cd AgentSpur && chmod +x build_dmg.sh && ./build_dmg.sh</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleCopyCommand}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200/85 bg-white px-2.5 py-1 text-[11px] font-sans font-medium text-slate-600 hover:text-slate-900 hover:border-slate-300 transition-all shrink-0 cursor-pointer"
+            >
+              {copiedCmd ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-sky-600" />
+                  <span>已复制命令</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>复制命令</span>
+                </>
+              )}
+            </button>
+          </div>
+        </section>
+
+        {/* Native Swift & DMG Packaging Source Code Browser */}
+        <section className="rounded-2xl border border-slate-200/75 bg-white/85 shadow-[0_20px_50px_-18px_rgba(15,23,42,0.06)] backdrop-blur-2xl overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200/70 px-6 py-3.5">
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
+              <FileCode2 className="w-4 h-4 text-sky-600 shrink-0" />
+              <span>macOS 原生工程文件一览 ({NATIVE_FILES.length} 个文件)</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleCopyCurrentFile}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200/85 bg-white/90 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-white hover:text-slate-900 hover:border-slate-300 transition-all cursor-pointer whitespace-nowrap shrink-0"
+            >
+              {copiedFile ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-sky-600" />
+                  <span>已复制 {selectedFile.relPath}</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>复制当前文件</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 min-h-[480px]">
+            <aside className="lg:col-span-4 border-b lg:border-b-0 lg:border-r border-slate-200/70 p-3 space-y-1 bg-slate-50/50">
+              {NATIVE_FILES.map((item) => {
+                const active = item.relPath === selectedFile.relPath;
+                return (
+                  <button
+                    key={item.relPath}
+                    type="button"
+                    onClick={() => setSelectedPath(item.relPath)}
+                    className={`w-full text-left rounded-xl px-3 py-2 text-xs font-mono transition-all cursor-pointer truncate ${
+                      active
+                        ? 'bg-sky-500/[0.11] text-sky-900 font-semibold border border-sky-300/60'
+                        : 'border border-transparent text-slate-600 hover:bg-white/80 hover:text-slate-900'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </aside>
+
+            <div className="lg:col-span-8 p-5 overflow-auto max-h-[560px] bg-white/60">
+              <pre className="text-xs font-mono leading-relaxed text-slate-800 whitespace-pre">
+                <code>{selectedFile.content}</code>
+              </pre>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
   );

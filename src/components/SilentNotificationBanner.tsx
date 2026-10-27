@@ -3,6 +3,7 @@ import { BellOff, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { AgentStatus, CharacterPack, SilentToastItem } from '../types/agent';
 import { AgentSpriteCanvas } from './AgentSpriteCanvas';
+import { AgentSpurLogo } from './AgentSpurLogo';
 
 interface SilentNotificationBannerProps {
   toasts: SilentToastItem[];
@@ -47,9 +48,10 @@ export const SilentNotificationBanner: React.FC<SilentNotificationBannerProps> =
               className="min-w-0 flex-1 text-left group"
             >
               <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
-                <BellOff className="w-3 h-3 text-emerald-600 shrink-0" />
+                <AgentSpurLogo size={13} />
                 <span className="font-medium text-slate-600">AgentSpur</span>
                 <span aria-hidden="true">·</span>
+                <BellOff className="w-3 h-3 text-sky-500 shrink-0" />
                 <span>静音提醒</span>
                 <span aria-hidden="true">·</span>
                 <span className="font-mono tabular-nums">{toast.timestamp}</span>
@@ -63,7 +65,7 @@ export const SilentNotificationBanner: React.FC<SilentNotificationBannerProps> =
               type="button"
               onClick={() => onDismiss(toast.id)}
               aria-label="关闭通知"
-              className="rounded-full p-1 text-slate-400 hover:bg-black/[0.05] hover:text-slate-700 transition-colors shrink-0"
+              className="rounded-full border border-transparent p-1 text-slate-400 hover:bg-slate-100/85 hover:border-slate-200/70 hover:text-slate-700 transition-all shrink-0 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
             </button>

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <defs>
+    <linearGradient id="spur-glass" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="55%" stop-color="#F0F9FF" />
+      <stop offset="100%" stop-color="#E0F2FE" />
+    </linearGradient>
+    <linearGradient id="spur-core" x1="9" y1="6.5" x2="15.5" y2="17" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+    <linearGradient id="spur-orbit" x1="5" y1="6" x2="18.5" y2="17.5" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7DD3FC" stop-opacity="0.45" />
+      <stop offset="100%" stop-color="#0EA5E9" stop-opacity="0.9" />
+    </linearGradient>
+  </defs>
+  <rect x="1.5" y="1.5" width="21" height="21" rx="6" fill="url(#spur-glass)" stroke="#BAE6FD" stroke-width="1" />
+  <path d="M5.9 14.5A6.75 6.75 0 1 1 15.8 17.55" stroke="url(#spur-orbit)" stroke-width="1.45" stroke-linecap="round" />
+  <circle cx="17.65" cy="8.15" r="1.4" fill="#0EA5E9" />
+  <path d="M12 6.9C12 6.9 15.45 10.55 15.45 13.15C15.45 15.08 13.9 16.65 12 16.65C10.1 16.65 8.55 15.08 8.55 13.15C8.55 10.55 12 6.9 12 6.9Z" fill="url(#spur-core)" />
+  <circle cx="10.95" cy="12.55" r="1" fill="#FFFFFF" fill-opacity="0.9" />
+</svg>

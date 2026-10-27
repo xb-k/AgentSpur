@@ -25,6 +25,32 @@
   font-variant-numeric: tabular-nums;
 }
 
+@keyframes focus-border-blink {
+  0%, 100% {
+    border-color: rgba(2, 132, 199, 0.9);
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.22);
+  }
+  50% {
+    border-color: rgba(14, 165, 233, 0.18);
+    box-shadow: 0 0 0 0px rgba(14, 165, 233, 0);
+  }
+}
+
+.animate-focus-border {
+  border-width: 1px;
+  border-style: solid;
+  animation: focus-border-blink 1.35s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-focus-border {
+    animation: none;
+    border-width: 1px;
+    border-style: solid;
+    border-color: rgba(2, 132, 199, 0.85);
+  }
+}
+
 /* Crisp macOS light vibrancy scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
