@@ -46,30 +46,29 @@ function drawStatusOverlayBadge(
 ) {
   ctx.save();
   if (status === AgentStatus.Thinking) {
-    // 3 rising / pulsing thought dots top-right (crisp cobalt on light background)
     const activeDot = Math.floor(frame / 5);
     for (let i = 0; i < 3; i++) {
-      const alpha = i === activeDot ? 1 : 0.32;
+      const alpha = i === activeDot ? 1 : 0.28;
       ctx.fillStyle = `rgba(2, 132, 199, ${alpha})`;
       ctx.beginPath();
-      ctx.arc(w * 0.72 + i * (w * 0.09), h * (0.24 - i * 0.05), w * 0.046, 0, Math.PI * 2);
+      ctx.arc(w * 0.72 + i * (w * 0.09), h * (0.23 - i * 0.05), w * 0.044, 0, Math.PI * 2);
       ctx.fill();
     }
   } else if (status === AgentStatus.Confirm) {
-    const pulse = 0.7 + 0.3 * Math.sin((frame / 15) * Math.PI * 2);
+    const pulse = 0.72 + 0.28 * Math.sin((frame / 15) * Math.PI * 2);
     ctx.fillStyle = `rgba(217, 119, 6, ${pulse})`;
     ctx.beginPath();
-    ctx.arc(w * 0.81, h * 0.23, w * 0.125, 0, Math.PI * 2);
+    ctx.arc(w * 0.81, h * 0.22, w * 0.12, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = `700 ${Math.round(w * 0.19)}px "JetBrains Mono", monospace`;
+    ctx.font = `700 ${Math.round(w * 0.18)}px "JetBrains Mono", monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('?', w * 0.81, h * 0.24);
+    ctx.fillText('?', w * 0.81, h * 0.23);
   } else if (status === AgentStatus.Completed) {
     const progress = Math.min(1, (frame + 3) / 8);
     ctx.strokeStyle = '#16A34A';
-    ctx.lineWidth = Math.max(1.6, w * 0.095);
+    ctx.lineWidth = Math.max(1.6, w * 0.092);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.beginPath();
@@ -86,7 +85,7 @@ function drawStatusOverlayBadge(
   } else if (status === AgentStatus.Error) {
     const flash = frame % 4 < 2 ? 1 : 0.45;
     ctx.strokeStyle = `rgba(220, 38, 38, ${flash})`;
-    ctx.lineWidth = Math.max(1.6, w * 0.095);
+    ctx.lineWidth = Math.max(1.6, w * 0.092);
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(w * 0.7, h * 0.14);
@@ -96,6 +95,119 @@ function drawStatusOverlayBadge(
     ctx.stroke();
   }
   ctx.restore();
+}
+
+// Fluid Minimalist Droplet ("Gin · 灵动微光") — Dynamic-Island-inspired elastic micro-spirit
+function renderDropletArchetype(
+  ctx: CanvasRenderingContext2D,
+  status: AgentStatus,
+  frame: number,
+  w: number,
+  h: number,
+  primary: string,
+  secondary: string
+) {
+  const cx = w * 0.48;
+  const cy = h * 0.55;
+  const t = (frame / 15) * Math.PI * 2;
+
+  ctx.save();
+
+  // Subtle ambient halo ring for Confirm / Working
+  if (status === AgentStatus.Confirm) {
+    const expand = (frame / 15) * (w * 0.16);
+    const alpha = Math.max(0, 0.48 - (frame / 15) * 0.48);
+    ctx.strokeStyle = `rgba(217, 119, 6, ${alpha})`;
+    ctx.lineWidth = Math.max(1.2, w * 0.055);
+    ctx.beginPath();
+    ctx.arc(cx, cy, w * 0.3 + expand, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (status === AgentStatus.Working) {
+    // Orbiting fluid satellite dot
+    const ox = cx + Math.cos(t * 2) * (w * 0.38);
+    const oy = cy + Math.sin(t * 2) * (h * 0.18);
+    ctx.fillStyle = secondary;
+    ctx.beginPath();
+    ctx.arc(ox, oy, w * 0.055, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Elastic squash & stretch body transform
+  const shakeX =
+    status === AgentStatus.Error && frame < 6
+      ? frame % 2 === 0
+        ? -w * 0.055
+        : w * 0.055
+      : 0;
+  const floatY =
+    status === AgentStatus.Thinking
+      ? Math.sin(t) * (h * 0.045)
+      : status === AgentStatus.Confirm
+      ? -Math.abs(Math.sin(t)) * (h * 0.065)
+      : 0;
+
+  const scaleX =
+    status === AgentStatus.Working
+      ? 1 + Math.sin(t * 2) * 0.08
+      : 1 + Math.sin(t) * 0.03;
+  const scaleY =
+    status === AgentStatus.Working
+      ? 1 - Math.sin(t * 2) * 0.08
+      : 1 - Math.sin(t) * 0.03;
+
+  ctx.translate(cx + shakeX, cy + floatY);
+  ctx.scale(scaleX, scaleY);
+
+  // Smooth rounded capsule-droplet core
+  ctx.fillStyle =
+    status === AgentStatus.Error
+      ? '#DC2626'
+      : status === AgentStatus.Completed
+      ? '#0F172A'
+      : primary;
+  ctx.beginPath();
+  ctx.arc(0, 0, w * 0.31, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Minimalist luminous pill eyes
+  ctx.fillStyle = '#FFFFFF';
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = Math.max(1.3, w * 0.068);
+  ctx.lineCap = 'round';
+
+  const gazeX = status === AgentStatus.Thinking ? Math.sin(t) * (w * 0.045) : 0;
+  const gazeY = status === AgentStatus.Thinking ? -h * 0.045 : 0;
+
+  if (status === AgentStatus.Completed) {
+    ctx.beginPath();
+    ctx.arc(-w * 0.1, 0, w * 0.055, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(w * 0.1, 0, w * 0.055, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.stroke();
+  } else if (status === AgentStatus.Error) {
+    ctx.beginPath();
+    ctx.moveTo(-w * 0.14, -h * 0.04);
+    ctx.lineTo(-w * 0.06, h * 0.04);
+    ctx.moveTo(-w * 0.06, -h * 0.04);
+    ctx.lineTo(-w * 0.14, h * 0.04);
+    ctx.moveTo(w * 0.06, -h * 0.04);
+    ctx.lineTo(w * 0.14, h * 0.04);
+    ctx.moveTo(w * 0.14, -h * 0.04);
+    ctx.lineTo(w * 0.06, h * 0.04);
+    ctx.stroke();
+  } else {
+    // Sleek vertical micro-pill eyes (blinking lightly on frame 13)
+    const blinkScale = frame === 13 ? 0.25 : 1;
+    const eyeH = h * 0.13 * blinkScale;
+    ctx.beginPath();
+    ctx.roundRect(-w * 0.125 + gazeX, -eyeH / 2 + gazeY, w * 0.062, eyeH, w * 0.03);
+    ctx.roundRect(w * 0.063 + gazeX, -eyeH / 2 + gazeY, w * 0.062, eyeH, w * 0.03);
+    ctx.fill();
+  }
+
+  ctx.restore();
+  drawStatusOverlayBadge(ctx, status, frame, w, h);
 }
 
 function renderGlyphArchetype(
@@ -116,16 +228,16 @@ function renderGlyphArchetype(
   if (status === AgentStatus.Thinking) {
     const angle = (frame / 15) * Math.PI * 2;
     ctx.strokeStyle = primary;
-    ctx.lineWidth = Math.max(1.6, w * 0.095);
+    ctx.lineWidth = Math.max(1.5, w * 0.09);
     ctx.beginPath();
     ctx.arc(cx, cy, r, angle, angle + Math.PI * 1.45);
     ctx.stroke();
 
     for (let i = 0; i < 3; i++) {
       const active = Math.floor(frame / 5) === i;
-      ctx.fillStyle = active ? '#0284C7' : 'rgba(15, 23, 42, 0.25)';
+      ctx.fillStyle = active ? '#0284C7' : 'rgba(15, 23, 42, 0.22)';
       ctx.beginPath();
-      ctx.arc(cx + (i - 1) * (w * 0.14), cy, w * 0.052, 0, Math.PI * 2);
+      ctx.arc(cx + (i - 1) * (w * 0.14), cy, w * 0.05, 0, Math.PI * 2);
       ctx.fill();
     }
   } else if (status === AgentStatus.Working) {
@@ -134,9 +246,9 @@ function renderGlyphArchetype(
     const startX = cx - ((barCount - 1) * spacing) / 2;
     for (let i = 0; i < barCount; i++) {
       const phase = ((frame + i * 3.5) / 15) * Math.PI * 2;
-      const barH = h * (0.22 + 0.42 * (0.5 + 0.5 * Math.sin(phase)));
+      const barH = h * (0.2 + 0.42 * (0.5 + 0.5 * Math.sin(phase)));
       ctx.strokeStyle = i === frame % 4 ? '#0284C7' : primary;
-      ctx.lineWidth = Math.max(1.7, w * 0.098);
+      ctx.lineWidth = Math.max(1.6, w * 0.092);
       ctx.beginPath();
       ctx.moveTo(startX + i * spacing, cy - barH / 2);
       ctx.lineTo(startX + i * spacing, cy + barH / 2);
@@ -146,32 +258,32 @@ function renderGlyphArchetype(
     const wave = (frame / 15) * r * 0.45;
     const waveAlpha = Math.max(0, 0.65 - (frame / 15) * 0.65);
     ctx.strokeStyle = `rgba(217, 119, 6, ${waveAlpha})`;
-    ctx.lineWidth = Math.max(1.1, w * 0.065);
+    ctx.lineWidth = Math.max(1.1, w * 0.062);
     ctx.beginPath();
     ctx.arc(cx, cy, r + wave, 0, Math.PI * 2);
     ctx.stroke();
 
     ctx.strokeStyle = '#D97706';
-    ctx.lineWidth = Math.max(1.6, w * 0.092);
+    ctx.lineWidth = Math.max(1.5, w * 0.088);
     ctx.beginPath();
     ctx.arc(cx, cy, r * 0.88, 0, Math.PI * 2);
     ctx.stroke();
 
     ctx.fillStyle = '#B45309';
-    ctx.font = `700 ${Math.round(w * 0.42)}px "JetBrains Mono", monospace`;
+    ctx.font = `700 ${Math.round(w * 0.4)}px "JetBrains Mono", monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('?', cx, cy + h * 0.02);
   } else if (status === AgentStatus.Completed) {
-    ctx.strokeStyle = 'rgba(22, 163, 74, 0.3)';
-    ctx.lineWidth = Math.max(1.4, w * 0.085);
+    ctx.strokeStyle = 'rgba(22, 163, 74, 0.28)';
+    ctx.lineWidth = Math.max(1.3, w * 0.08);
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.stroke();
 
     const p = Math.min(1, (frame + 2) / 7);
     ctx.strokeStyle = '#16A34A';
-    ctx.lineWidth = Math.max(1.8, w * 0.105);
+    ctx.lineWidth = Math.max(1.7, w * 0.1);
     ctx.beginPath();
     ctx.moveTo(cx - r * 0.42, cy + r * 0.02);
     if (p < 0.45) {
@@ -187,7 +299,7 @@ function renderGlyphArchetype(
     const shake = frame < 6 ? (frame % 2 === 0 ? -w * 0.05 : w * 0.05) : 0;
     ctx.translate(shake, 0);
     ctx.strokeStyle = '#DC2626';
-    ctx.lineWidth = Math.max(1.6, w * 0.095);
+    ctx.lineWidth = Math.max(1.5, w * 0.09);
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.stroke();
@@ -199,7 +311,7 @@ function renderGlyphArchetype(
 
     ctx.fillStyle = '#DC2626';
     ctx.beginPath();
-    ctx.arc(cx, cy + r * 0.42, w * 0.058, 0, Math.PI * 2);
+    ctx.arc(cx, cy + r * 0.42, w * 0.055, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -255,13 +367,11 @@ function renderWhaleArchetype(
   ctx.lineTo(w * 0.07, h * 0.66 + tailSwing);
   ctx.stroke();
 
-  // Light belly highlight
   ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
   ctx.beginPath();
   ctx.arc(w * 0.52, h * 0.65, w * 0.12, 0, Math.PI);
   ctx.fill();
 
-  // Crisp white eye on cobalt/crimson body
   ctx.fillStyle = '#FFFFFF';
   if (status === AgentStatus.Completed) {
     ctx.strokeStyle = '#FFFFFF';
@@ -336,7 +446,6 @@ function renderNekoArchetype(
   ctx.roundRect(w * 0.2, h * 0.34, w * 0.6, h * 0.46, w * 0.16);
   ctx.fill();
 
-  // Bright crisp eyes on dark cat head
   ctx.fillStyle = '#FFFFFF';
   ctx.strokeStyle = '#FFFFFF';
   ctx.lineWidth = Math.max(1.3, w * 0.07);
@@ -453,17 +562,17 @@ function renderCustomPixelArchetype(
     pack.customBaseSprite && pack.customBaseSprite.length >= 8
       ? pack.customBaseSprite
       : [
-          '..##....##..',
+          '....####....',
+          '..########..',
           '.##########.',
-          '###++##++###',
-          '###++##++###',
-          '############',
-          '.####++####.',
+          '.###+##+###.',
+          '.###+##+###.',
           '.##########.',
           '..########..',
-          '..########..',
-          '...##..##...',
-          '..###..###..',
+          '...######...',
+          '....####....',
+          '............',
+          '............',
           '............',
         ];
 
@@ -545,6 +654,9 @@ export const AgentSpriteCanvas: React.FC<AgentSpriteCanvasProps> = ({
     const drawFrame = (f: number) => {
       ctx.clearRect(0, 0, pixelW, pixelH);
       switch (pack.archetype) {
+        case 'droplet':
+          renderDropletArchetype(ctx, status, f, pixelW, pixelH, primary, secondary);
+          break;
         case 'glyph':
           renderGlyphArchetype(ctx, status, f, pixelW, pixelH, primary);
           break;

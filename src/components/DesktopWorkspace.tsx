@@ -1,20 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  Check,
-  Copy,
-  Download,
-  FolderOpen,
-  Play,
-  RotateCcw,
-  SquareTerminal,
-  Terminal,
-} from 'lucide-react';
+import { Check, Copy, Download, FolderOpen, RotateCcw } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   AgentStatus,
   CharacterPack,
   MasterSession,
   SubAgentTask,
-  TargetApp,
 } from '../types/agent';
 import {
   NATIVE_SWIFT_APPKIT_CODE,
@@ -49,15 +40,14 @@ interface DesktopWorkspaceProps {
 }
 
 const ITERM_TABS = [
-  { index: 0, label: '1: opencode (main)' },
-  { index: 1, label: '2: opencode (@explore)' },
-  { index: 2, label: '3: opencode-tty' },
-  { index: 3, label: '4: opencode-debug' },
+  { index: 0, label: 'opencode · main' },
+  { index: 1, label: 'opencode · @explore' },
+  { index: 2, label: 'opencode · tty' },
+  { index: 3, label: 'opencode · log' },
 ];
 
 export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
   activeTab,
-  onChangeTab,
   sessions,
   selectedSession,
   selectedSubTask,
@@ -77,7 +67,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
   const [copiedSwift, setCopiedSwift] = useState<boolean>(false);
   const [swiftFileTab, setSwiftFileTab] = useState<'main' | 'package'>('main');
 
-  const [customName, setCustomName] = useState<string>('晴昼机械鸮');
+  const [customName, setCustomName] = useState<string>('自制微星精灵');
   const [customModel, setCustomModel] = useState<string>(
     'deepseek/deepseek-reasoner'
   );
@@ -92,9 +82,6 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
     return unsub;
   }, [activeTab]);
 
-  const activeTargetApp = selectedSubTask
-    ? selectedSubTask.targetApp
-    : selectedSession.targetApp;
   const activeTargetRef = selectedSubTask
     ? selectedSubTask.targetRef
     : selectedSession.targetRef;
@@ -114,7 +101,7 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'deepseek-day-owl.rolepack.json';
+    a.download = 'deepseek-minimal-pack.json';
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -138,9 +125,9 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
     try {
       await navigator.clipboard.writeText(content);
       setCopiedSwift(true);
-      window.setTimeout(() => setCopiedSwift(false), 1800);
+      window.setTimeout(() => setCopiedSwift(false), 1600);
     } catch {
-      // Clipboard fallback ignored cleanly
+      // Ignore clipboard fallback
     }
   };
 
@@ -160,13 +147,13 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
     const newPack: CharacterPack = {
       id: `custom-${Date.now()}`,
       name: `${customName.trim() || '自制角色'}`,
-      author: 'Local Mac Import',
+      author: 'Local Mac',
       version: '1.0.0',
       deepseekModel: customModel,
-      roleDescription: '通过本地点阵编辑器生成的 DeepSeek 自定义 15 FPS 角色包。',
+      roleDescription: '本地自制极简 15 FPS 角色包。',
       archetype: 'custom_pixel',
-      primaryColor: '#0369A1',
-      secondaryColor: '#D97706',
+      primaryColor: '#0F172A',
+      secondaryColor: '#0EA5E9',
       customBaseSprite: customGrid,
     };
     onImportPackObject(newPack);
@@ -174,25 +161,31 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
 
   if (activeTab === 'character_lab') {
     return (
-      <div className="flex-1 min-w-0 rounded-xl border border-slate-200/90 bg-white/94 backdrop-blur-2xl shadow-[0_16px_40px_rgba(15,23,42,0.08)] overflow-hidden text-slate-900">
-        {/* macOS Light Window Titlebar */}
-        <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-slate-200/80 bg-slate-50/90">
+      <motion.div
+        key="character_lab"
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+        className="flex-1 min-w-0 rounded-2xl border border-black/[0.06] bg-white/82 backdrop-blur-3xl shadow-[0_24px_60px_-15px_rgba(15,23,42,0.08)] overflow-hidden text-slate-900"
+      >
+        <div className="flex items-center justify-between gap-4 px-5 py-3.5 border-b border-black/[0.05]">
           <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-rose-500" />
-            <span className="w-3 h-3 rounded-full bg-amber-400" />
-            <span className="w-3 h-3 rounded-full bg-emerald-500" />
-            <h1 className="ml-2 text-sm font-semibold text-slate-900">
-              15 FPS 五状态原生帧序列与 DeepSeek 角色包
+            <span className="w-2.5 h-2.5 rounded-full bg-rose-400" />
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+            <h1 className="ml-2 text-xs font-semibold text-slate-800">
+              AgentSpur · 灵动角色与 15 FPS 帧序列
             </h1>
           </div>
+
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={handleDownloadSampleJson}
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-black/[0.05] hover:text-slate-900 transition-colors whitespace-nowrap shrink-0"
             >
               <Download className="w-3.5 h-3.5 shrink-0" />
-              <span>下载模板 JSON</span>
+              <span>示例 JSON</span>
             </button>
             <input
               ref={fileUploadRef}
@@ -210,28 +203,27 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
             <button
               type="button"
               onClick={() => fileUploadRef.current?.click()}
-              className="inline-flex items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-700 transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
             >
               <FolderOpen className="w-3.5 h-3.5 shrink-0" />
-              <span>导入角色包 (.json)</span>
+              <span>导入角色包</span>
             </button>
           </div>
         </div>
 
         <div className="p-6 space-y-8">
-          {/* 1. Five Real-time States Simultaneous 15 FPS Showcase */}
+          {/* 5 States Simultaneous 15 FPS Strip */}
           <section className="space-y-3">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-base font-semibold text-slate-900">
-                01. 五套完整状态动画（菜单栏 15 FPS 同步播放）
+            <div className="flex items-baseline justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-900">
+                五状态实时预览
               </h2>
-              <p className="text-xs text-slate-500 font-mono tabular-nums">
-                当前角色：{activePack.name} · 帧周期 66.7ms · 帧序号{' '}
-                {String(liveFrameIdx + 1).padStart(2, '0')}/15
-              </p>
+              <span className="text-[11px] font-mono text-slate-400 tabular-nums">
+                {activePack.name} · 15 FPS · 帧 {String(liveFrameIdx + 1).padStart(2, '0')}/15
+              </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
               {(Object.values(AgentStatus) as AgentStatus[]).map((st) => {
                 const meta = STATUS_META[st];
                 const isSelected = inspectedState === st;
@@ -240,17 +232,17 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
                     key={st}
                     type="button"
                     onClick={() => setInspectedState(st)}
-                    className={`flex flex-col items-center justify-center rounded-lg border p-4 text-center transition-colors duration-150 ${
+                    className={`relative flex flex-col items-center justify-center rounded-xl py-4 px-3 transition-colors duration-150 ${
                       isSelected
-                        ? 'border-sky-500 bg-sky-50/80'
-                        : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100/70'
+                        ? 'bg-sky-500/[0.08]'
+                        : 'bg-slate-900/[0.025] hover:bg-slate-900/[0.045]'
                     }`}
                   >
-                    <AgentSpriteCanvas status={st} pack={activePack} size={36} />
-                    <span className={`mt-2.5 text-xs font-semibold ${meta.textClass}`}>
+                    <AgentSpriteCanvas status={st} pack={activePack} size={32} />
+                    <span className={`mt-2 text-xs font-semibold ${meta.textClass}`}>
                       {meta.label}
                     </span>
-                    <span className="mt-0.5 text-[11px] text-slate-500">
+                    <span className="mt-0.5 text-[11px] text-slate-400">
                       {meta.shortVerb}
                     </span>
                   </button>
@@ -259,37 +251,37 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
             </div>
           </section>
 
-          {/* 2. 15-Frame Native Sprite Sheet Inspector */}
-          <section className="space-y-3 pt-2 border-t border-slate-200">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-base font-semibold text-slate-900">
-                02. 逐帧分解视图：{STATUS_META[inspectedState].label}（共 15 帧 / 秒）
+          {/* 15-Frame Minimalist Strip */}
+          <section className="space-y-2.5 pt-4 border-t border-black/[0.05]">
+            <div className="flex items-baseline justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-900">
+                {STATUS_META[inspectedState].label} · 15 帧分解
               </h2>
-              <span className="text-xs text-slate-500">
+              <span className="text-[11px] text-slate-400">
                 {STATUS_META[inspectedState].frameNote}
               </span>
             </div>
 
-            <div className="grid grid-cols-5 sm:grid-cols-15 gap-1.5">
+            <div className="grid grid-cols-5 sm:grid-cols-15 gap-1">
               {Array.from({ length: 15 }, (_, idx) => {
                 const isCurrentTick = liveFrameIdx === idx;
                 return (
                   <div
                     key={idx}
-                    className={`flex flex-col items-center justify-center rounded-md border py-2 px-1 transition-colors duration-75 ${
+                    className={`flex flex-col items-center justify-center rounded-lg py-2 px-1 transition-colors duration-75 ${
                       isCurrentTick
-                        ? 'border-sky-500 bg-sky-50'
-                        : 'border-slate-200 bg-slate-50/70'
+                        ? 'bg-sky-500/[0.12]'
+                        : 'bg-slate-900/[0.02]'
                     }`}
                   >
                     <AgentSpriteCanvas
                       status={inspectedState}
                       pack={activePack}
-                      size={24}
+                      size={20}
                       fixedFrame={idx}
                     />
-                    <span className="mt-1.5 font-mono text-[10px] tabular-nums text-slate-500">
-                      F{String(idx + 1).padStart(2, '0')}
+                    <span className="mt-1 font-mono text-[10px] tabular-nums text-slate-400">
+                      {String(idx + 1).padStart(2, '0')}
                     </span>
                   </div>
                 );
@@ -297,13 +289,11 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
             </div>
           </section>
 
-          {/* 3. Installed Character Packs + Custom DeepSeek Pixel Role Editor */}
-          <section className="grid grid-cols-1 xl:grid-cols-12 gap-6 pt-2 border-t border-slate-200 items-start">
-            <div className="xl:col-span-6 space-y-3">
-              <h2 className="text-base font-semibold text-slate-900">
-                03. 已加载角色包列表
-              </h2>
-              <div className="space-y-2">
+          {/* Minimalist Role Switcher + Pixel Sketchpad */}
+          <section className="grid grid-cols-1 xl:grid-cols-12 gap-8 pt-4 border-t border-black/[0.05] items-start">
+            <div className="xl:col-span-6 space-y-2.5">
+              <h2 className="text-sm font-semibold text-slate-900">切换角色</h2>
+              <div className="space-y-1">
                 {packs.map((pack) => {
                   const active = pack.id === activePack.id;
                   return (
@@ -311,27 +301,27 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
                       key={pack.id}
                       type="button"
                       onClick={() => onSelectPack(pack.id)}
-                      className={`w-full text-left rounded-lg border p-3 flex items-center gap-3.5 transition-colors duration-150 ${
+                      className={`w-full text-left rounded-xl px-3 py-2.5 flex items-center gap-3 transition-colors duration-150 ${
                         active
-                          ? 'border-sky-500 bg-sky-50/80'
-                          : 'border-slate-200 bg-white hover:bg-slate-50'
+                          ? 'bg-sky-500/[0.09]'
+                          : 'hover:bg-slate-900/[0.035]'
                       }`}
                     >
                       <AgentSpriteCanvas
                         status={inspectedState}
                         pack={pack}
-                        size={28}
+                        size={24}
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs font-semibold text-slate-900 truncate">
                             {pack.name}
                           </span>
-                          <span className="font-mono text-[11px] text-slate-500 shrink-0">
-                            {pack.deepseekModel}
+                          <span className="font-mono text-[11px] text-slate-400 shrink-0">
+                            {pack.deepseekModel.replace('deepseek/', '')}
                           </span>
                         </div>
-                        <p className="mt-0.5 text-[11px] text-slate-500 line-clamp-1">
+                        <p className="mt-0.5 text-[11px] text-slate-500 truncate">
                           {pack.roleDescription}
                         </p>
                       </div>
@@ -341,110 +331,100 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
               </div>
             </div>
 
-            {/* Right half: Quick Custom DeepSeek Role Pack Creator */}
             <div className="xl:col-span-6 space-y-3">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="text-base font-semibold text-slate-900">
-                  04. 自制 DeepSeek 角色包（点击格子绘制）
+                <h2 className="text-sm font-semibold text-slate-900">
+                  点阵自制角色
                 </h2>
                 <button
                   type="button"
                   onClick={() =>
                     setCustomGrid(SAMPLE_CUSTOM_PACK_JSON.customBaseSprite)
                   }
-                  className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-900 transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-800 transition-colors whitespace-nowrap shrink-0"
                 >
                   <RotateCcw className="w-3 h-3" />
-                  <span>重置画布</span>
+                  <span>重置</span>
                 </button>
               </div>
 
               <div className="flex flex-col sm:flex-row gap-4 items-start">
-                <div className="grid grid-cols-12 gap-0.5 p-2 rounded-lg border border-slate-200 bg-slate-100/80 shrink-0">
+                <div className="grid grid-cols-12 gap-0.5 p-2 rounded-xl bg-slate-900/[0.04] shrink-0">
                   {customGrid.map((row, rIdx) =>
                     row.split('').map((cell, cIdx) => (
                       <button
                         key={`${rIdx}-${cIdx}`}
                         type="button"
                         onClick={() => toggleGridCell(rIdx, cIdx)}
-                        aria-label={`像素格 ${rIdx + 1},${cIdx + 1}`}
-                        className={`w-4 h-4 rounded-[2px] transition-colors ${
+                        aria-label={`像素 ${rIdx + 1},${cIdx + 1}`}
+                        className={`w-3.5 h-3.5 rounded-[2px] transition-colors ${
                           cell === '#'
-                            ? 'bg-sky-700'
+                            ? 'bg-slate-900'
                             : cell === '+'
-                            ? 'bg-amber-500'
-                            : 'bg-white hover:bg-slate-200'
+                            ? 'bg-sky-500'
+                            : 'bg-white/80 hover:bg-white'
                         }`}
                       />
                     ))
                   )}
                 </div>
 
-                <div className="flex-1 space-y-3 w-full">
-                  <div>
-                    <label
-                      htmlFor="custom-pack-name"
-                      className="block text-xs font-medium text-slate-600 mb-1"
-                    >
-                      角色名称
-                    </label>
-                    <input
-                      id="custom-pack-name"
-                      type="text"
-                      value={customName}
-                      onChange={(e) => setCustomName(e.target.value)}
-                      className="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-sky-600"
-                    />
-                  </div>
+                <div className="flex-1 space-y-2.5 w-full">
+                  <input
+                    type="text"
+                    aria-label="自定义角色名称"
+                    placeholder="角色名称"
+                    value={customName}
+                    onChange={(e) => setCustomName(e.target.value)}
+                    className="w-full rounded-lg border border-black/[0.08] bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  />
 
-                  <div>
-                    <label
-                      htmlFor="custom-pack-model"
-                      className="block text-xs font-medium text-slate-600 mb-1"
-                    >
-                      绑定 opencode DeepSeek 模型
-                    </label>
-                    <select
-                      id="custom-pack-model"
-                      value={customModel}
-                      onChange={(e) => setCustomModel(e.target.value)}
-                      className="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-sky-600"
-                    >
-                      <option value="deepseek/deepseek-reasoner">
-                        deepseek/deepseek-reasoner
-                      </option>
-                      <option value="deepseek/deepseek-chat">
-                        deepseek/deepseek-chat
-                      </option>
-                    </select>
-                  </div>
+                  <select
+                    aria-label="绑定 DeepSeek 模型"
+                    value={customModel}
+                    onChange={(e) => setCustomModel(e.target.value)}
+                    className="w-full rounded-lg border border-black/[0.08] bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  >
+                    <option value="deepseek/deepseek-reasoner">
+                      deepseek/deepseek-reasoner
+                    </option>
+                    <option value="deepseek/deepseek-chat">
+                      deepseek/deepseek-chat
+                    </option>
+                  </select>
 
                   <button
                     type="button"
                     onClick={handleApplyCustomPack}
-                    className="w-full rounded-md bg-sky-600 px-3 py-2 text-xs font-semibold text-white hover:bg-sky-700 transition-colors whitespace-nowrap"
+                    className="w-full rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 transition-colors whitespace-nowrap"
                   >
-                    载入到右上角菜单栏
+                    载入到菜单栏
                   </button>
                 </div>
               </div>
             </div>
           </section>
         </div>
-      </div>
+      </motion.div>
     );
   }
 
   if (activeTab === 'swift_source') {
     return (
-      <div className="flex-1 min-w-0 rounded-xl border border-slate-200/90 bg-white/94 backdrop-blur-2xl shadow-[0_16px_40px_rgba(15,23,42,0.08)] overflow-hidden text-slate-900">
-        <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-slate-200/80 bg-slate-50/90">
+      <motion.div
+        key="swift_source"
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+        className="flex-1 min-w-0 rounded-2xl border border-black/[0.06] bg-white/82 backdrop-blur-3xl shadow-[0_24px_60px_-15px_rgba(15,23,42,0.08)] overflow-hidden text-slate-900"
+      >
+        <div className="flex items-center justify-between gap-4 px-5 py-3.5 border-b border-black/[0.05]">
           <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-rose-500" />
-            <span className="w-3 h-3 rounded-full bg-amber-400" />
-            <span className="w-3 h-3 rounded-full bg-emerald-500" />
-            <h1 className="ml-2 text-sm font-semibold text-slate-900">
-              原生 AppKit 极轻架构（零 WebView · 零常驻守护进程）
+            <span className="w-2.5 h-2.5 rounded-full bg-rose-400" />
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+            <h1 className="ml-2 text-xs font-semibold text-slate-800">
+              AgentSpur · 原生 AppKit 极简源码
             </h1>
           </div>
 
@@ -452,24 +432,24 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
             <button
               type="button"
               onClick={handleCopySwift}
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-black/[0.05] hover:text-slate-900 transition-colors whitespace-nowrap shrink-0"
             >
               {copiedSwift ? (
                 <>
                   <Check className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>已复制源码</span>
+                  <span>已复制</span>
                 </>
               ) : (
                 <>
                   <Copy className="w-3.5 h-3.5" />
-                  <span>复制代码</span>
+                  <span>复制</span>
                 </>
               )}
             </button>
             <button
               type="button"
               onClick={handleDownloadSwiftProject}
-              className="inline-flex items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-700 transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
             >
               <Download className="w-3.5 h-3.5" />
               <span>下载 {swiftFileTab === 'main' ? 'main.swift' : 'Package.swift'}</span>
@@ -477,115 +457,78 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
           </div>
         </div>
 
-        <div className="p-6 space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pb-5 border-b border-slate-200">
-            <div>
-              <div className="text-xs text-slate-500">视图渲染层</div>
-              <div className="mt-1 text-sm font-semibold text-slate-900">
-                纯 AppKit NSStatusItem + NSMenu
-              </div>
-              <p className="mt-1 text-xs text-slate-600">
-                不链接 WebKit.framework，内存常驻约 11 MB，预烘焙 75 张 Retina 位图以 15 FPS 切换。
-              </p>
+        <div className="p-6 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-4 text-xs text-slate-500">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium text-slate-800">纯 AppKit 原生</span>
+              <span aria-hidden="true">·</span>
+              <span>无 WebView</span>
+              <span aria-hidden="true">·</span>
+              <span>零常驻后台进程</span>
+              <span aria-hidden="true">·</span>
+              <span>本机 FSEvents 只读读取</span>
             </div>
-            <div>
-              <div className="text-xs text-slate-500">会话读取方式</div>
-              <div className="mt-1 text-sm font-semibold text-slate-900">
-                本机只读 FSEvents 按需唤醒
-              </div>
-              <p className="mt-1 text-xs text-slate-600">
-                无后台轮询守护进程；仅在 ~/.local/share/opencode/storage 文件写入时以 O_RDONLY 读取。
-              </p>
-            </div>
-            <div>
-              <div className="text-xs text-slate-500">终端跳转与静音提醒</div>
-              <div className="mt-1 text-sm font-semibold text-slate-900">
-                iTerm2 TTY 定位 + UNNotification
-              </div>
-              <p className="mt-1 text-xs text-slate-600">
-                点一下跳回对应 opencode TUI 窗口或指定 iTerm2 标签页，完成提醒严格静音且可关闭。
-              </p>
+
+            <div className="inline-flex rounded-lg bg-slate-900/[0.045] p-0.5 font-mono">
+              <button
+                type="button"
+                onClick={() => setSwiftFileTab('main')}
+                className={`rounded-md px-2.5 py-0.5 text-[11px] transition-colors whitespace-nowrap ${
+                  swiftFileTab === 'main'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                main.swift
+              </button>
+              <button
+                type="button"
+                onClick={() => setSwiftFileTab('package')}
+                className={`rounded-md px-2.5 py-0.5 text-[11px] transition-colors whitespace-nowrap ${
+                  swiftFileTab === 'package'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Package.swift
+              </button>
             </div>
           </div>
 
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-4">
-              <div className="inline-flex rounded-lg bg-slate-200/75 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setSwiftFileTab('main')}
-                  className={`rounded-md px-3 py-1 text-xs font-mono transition-colors whitespace-nowrap ${
-                    swiftFileTab === 'main'
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Sources/AgentBar/main.swift
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSwiftFileTab('package')}
-                  className={`rounded-md px-3 py-1 text-xs font-mono transition-colors whitespace-nowrap ${
-                    swiftFileTab === 'package'
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Package.swift
-                </button>
-              </div>
-
-              <span className="text-xs font-mono text-slate-500">
-                编译命令：swift build -c release
-              </span>
-            </div>
-
-            <pre className="max-h-[430px] overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs font-mono leading-relaxed text-slate-800">
-              <code>
-                {swiftFileTab === 'main'
-                  ? NATIVE_SWIFT_APPKIT_CODE
-                  : NATIVE_SWIFT_PACKAGE_CODE}
-              </code>
-            </pre>
-          </div>
+          <pre className="max-h-[450px] overflow-auto rounded-xl bg-slate-900/[0.03] p-5 text-xs font-mono leading-relaxed text-slate-800">
+            <code>
+              {swiftFileTab === 'main'
+                ? NATIVE_SWIFT_APPKIT_CODE
+                : NATIVE_SWIFT_PACKAGE_CODE}
+            </code>
+          </pre>
         </div>
-      </div>
+      </motion.div>
     );
   }
 
-  // Default: 'workspace' — Simulated opencode TUI / iTerm2 Light Terminal Window Linked to Menu Bar Clicks
+  // Default: Featherlight opencode TUI / iTerm2 Window + Fluid 5-State Dock
   return (
-    <div className="flex-1 min-w-0 flex flex-col gap-5">
-      <div className="rounded-xl border border-slate-200/90 bg-white/94 backdrop-blur-2xl shadow-[0_16px_40px_rgba(15,23,42,0.08)] overflow-hidden text-slate-900">
-        {/* macOS Light Traffic Lights + Target App Header */}
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-200/80 bg-slate-50/90">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="w-3 h-3 rounded-full bg-rose-500 shrink-0" />
-            <span className="w-3 h-3 rounded-full bg-amber-400 shrink-0" />
-            <span className="w-3 h-3 rounded-full bg-emerald-500 shrink-0" />
-            <div className="ml-2 flex items-center gap-2 min-w-0">
-              {activeTargetApp === TargetApp.OpenCodeTUI ? (
-                <SquareTerminal className="w-4 h-4 text-sky-600 shrink-0" />
-              ) : (
-                <Terminal className="w-4 h-4 text-emerald-600 shrink-0" />
-              )}
-              <span className="text-sm font-semibold text-slate-900 truncate">
-                {activeTargetRef}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
-            {lastJumpNotice ? (
-              <span className="text-sky-700 font-medium">{lastJumpNotice}</span>
-            ) : (
-              <span className="truncate max-w-xs">{selectedSession.localPath}</span>
-            )}
-          </div>
+    <motion.div
+      key="workspace"
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+      className="flex-1 min-w-0 rounded-2xl border border-black/[0.06] bg-white/82 backdrop-blur-3xl shadow-[0_24px_60px_-15px_rgba(15,23,42,0.08)] overflow-hidden text-slate-900"
+    >
+      {/* Minimalist Window Bar + iTerm2 Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-3 border-b border-black/[0.05]">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-2.5 h-2.5 rounded-full bg-rose-400 shrink-0" />
+          <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0" />
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0" />
+          <span className="ml-2 text-xs font-semibold text-slate-800 truncate">
+            {activeTargetRef}
+          </span>
         </div>
 
-        {/* Authentic Light-Mode iTerm2 Tab Bar Running opencode TUI */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 border-b border-slate-200 bg-slate-100/85 text-xs font-mono">
+        {/* Minimalist iTerm2 Tab Switcher */}
+        <div className="flex items-center gap-1 rounded-lg bg-slate-900/[0.04] p-0.5 font-mono text-[11px]">
           {ITERM_TABS.map((t) => {
             const isTabActive = activeItermIndex === t.index;
             return (
@@ -607,153 +550,129 @@ export const DesktopWorkspace: React.FC<DesktopWorkspaceProps> = ({
                     }
                   }
                 }}
-                className={`px-3 py-2 text-left truncate border-r border-slate-200/80 transition-colors ${
+                className={`relative rounded-md px-2.5 py-1 transition-colors whitespace-nowrap shrink-0 ${
                   isTabActive
-                    ? 'bg-white text-slate-900 font-semibold'
-                    : 'text-slate-500 hover:text-slate-800 hover:bg-white/60'
+                    ? 'text-slate-900 font-medium'
+                    : 'text-slate-400 hover:text-slate-700'
                 }`}
               >
-                ⌘{t.index + 1} · {t.label}
+                {isTabActive && (
+                  <motion.span
+                    layoutId="itermTabPill"
+                    transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                    className="absolute inset-0 rounded-md bg-white shadow-[0_1px_2px_rgba(15,23,42,0.06)]"
+                  />
+                )}
+                <span className="relative z-10">⌘{t.index + 1}</span>
               </button>
             );
           })}
         </div>
+      </div>
 
-        {/* Active opencode TUI Session / Sub-Agent Read-Only Local Snapshot View */}
-        <div className="p-6 space-y-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-1 min-w-0 flex-1">
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <span>
-                  {selectedSubTask
-                    ? `opencode 子任务 (${selectedSubTask.subagentRole})`
-                    : 'opencode Master 主会话'}
-                </span>
-                <span aria-hidden="true">·</span>
-                <span className="font-mono text-slate-700">
-                  {selectedSession.modelName}
-                </span>
-                <span aria-hidden="true">·</span>
-                <span>本机文件只读映射</span>
-              </div>
-
-              <h2 className="text-lg font-semibold text-slate-900 text-balance">
-                {selectedSubTask ? selectedSubTask.title : selectedSession.title}
-              </h2>
-
-              <p className="text-sm text-slate-600">{selectedSession.summary}</p>
-            </div>
-
-            <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 shrink-0">
-              <AgentSpriteCanvas
-                status={activeStatus}
-                pack={activePack}
-                size={24}
-              />
-              <div className="text-xs">
-                <div className={`font-semibold ${STATUS_META[activeStatus].textClass}`}>
-                  {STATUS_META[activeStatus].label}
-                </div>
-                <div className="text-[11px] text-slate-500 font-mono">15 FPS 播放中</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Light-Theme opencode TUI Terminal Box */}
-          <div className="rounded-lg border border-slate-200 bg-slate-50/90 p-4 font-mono text-xs leading-relaxed text-slate-800 space-y-1.5">
-            <div className="pb-2 mb-2 border-b border-slate-200/80 flex items-center justify-between text-[11px] text-slate-500">
-              <span>opencode storage：{selectedSession.localPath}</span>
+      {/* Airy opencode TUI Read-Only View */}
+      <div className="p-7 space-y-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1.5 min-w-0">
+            <div className="flex items-center gap-2 text-xs text-slate-400">
               <span>
-                {selectedSubTask ? selectedSubTask.localOffset : selectedSession.updatedAt}
+                {selectedSubTask
+                  ? `子任务 ${selectedSubTask.subagentRole}`
+                  : 'Master 会话'}
               </span>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono text-slate-500">
+                {selectedSession.modelName.replace('deepseek/', '')}
+              </span>
+              {lastJumpNotice && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <AnimatePresence mode="wait">
+                    <motion.span
+                      key={lastJumpNotice}
+                      initial={{ opacity: 0, y: 2 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      className="text-sky-600 font-medium"
+                    >
+                      {lastJumpNotice}
+                    </motion.span>
+                  </AnimatePresence>
+                </>
+              )}
             </div>
-            {activeLogLines.map((line, i) => (
-              <div key={i} className="break-all">
-                {line}
-              </div>
-            ))}
-            <div className="pt-2 mt-2 border-t border-slate-200/70 flex items-center justify-between text-[11px] text-slate-400">
-              <span>tab switch agent · ctrl+p commands · ctrl+c interrupt</span>
-              <span>opencode TUI (Light)</span>
-            </div>
+
+            <h2 className="text-lg font-semibold tracking-tight text-slate-900 text-balance">
+              {selectedSubTask ? selectedSubTask.title : selectedSession.title}
+            </h2>
+
+            <p className="text-xs text-slate-500">{selectedSession.summary}</p>
           </div>
 
-          {/* Interactive Simulation Bar: Test All 5 Real-time Menu Bar States & Silent Completion Toast */}
-          <div className="pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
-            <div className="space-y-0.5">
-              <div className="text-xs font-semibold text-slate-800">
-                状态演练台（模拟 opencode 本机状态变更，观察右上角菜单栏 15 FPS 动画）
-              </div>
-              <div className="text-[11px] text-slate-500">
-                状态栏本身保持纯净只读；点击下方状态可测试菜单栏动画或触发「完成」静音横幅
-              </div>
-            </div>
+          <AgentSpriteCanvas
+            status={activeStatus}
+            pack={activePack}
+            size={32}
+          />
+        </div>
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              {(Object.values(AgentStatus) as AgentStatus[]).map((st) => {
-                const meta = STATUS_META[st];
-                const isCurr = activeStatus === st;
-                return (
-                  <button
-                    key={st}
-                    type="button"
-                    onClick={() =>
-                      onUpdateSessionStatus(
-                        selectedSession.id,
-                        st,
-                        selectedSubTask?.id
-                      )
-                    }
-                    className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors duration-150 whitespace-nowrap shrink-0 ${
-                      isCurr
-                        ? 'border-sky-500 bg-sky-50 text-sky-900 font-semibold'
-                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-100 hover:text-slate-900'
-                    }`}
-                  >
+        {/* Clean Minimalist opencode TUI Stream */}
+        <div className="rounded-xl bg-slate-900/[0.028] p-5 font-mono text-xs leading-relaxed text-slate-700 space-y-1.5">
+          {activeLogLines.map((line, i) => (
+            <div key={i} className="break-all min-h-[1rem]">
+              {line}
+            </div>
+          ))}
+          <div className="pt-3 mt-3 border-t border-black/[0.05] flex items-center justify-between text-[11px] text-slate-400">
+            <span>{selectedSession.localPath}</span>
+            <span>本机只读</span>
+          </div>
+        </div>
+
+        {/* Fluid Minimalist 5-State Trigger Bar */}
+        <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
+          <span className="text-xs text-slate-400">
+            切换状态预览右上角菜单栏 15 FPS 动画
+          </span>
+
+          <div className="inline-flex flex-wrap items-center gap-1 rounded-xl bg-slate-900/[0.04] p-1">
+            {(Object.values(AgentStatus) as AgentStatus[]).map((st) => {
+              const meta = STATUS_META[st];
+              const isCurr = activeStatus === st;
+              return (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() =>
+                    onUpdateSessionStatus(
+                      selectedSession.id,
+                      st,
+                      selectedSubTask?.id
+                    )
+                  }
+                  className={`relative inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                    isCurr
+                      ? 'text-slate-950'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  {isCurr && (
+                    <motion.span
+                      layoutId="fluidStatePill"
+                      transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                      className="absolute inset-0 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.08)]"
+                    />
+                  )}
+                  <span className="relative z-10 flex items-center gap-1.5">
                     <AgentSpriteCanvas status={st} pack={activePack} size={14} />
                     <span>{meta.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
-
-      {/* Bottom Quick Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <button
-          type="button"
-          onClick={() => onChangeTab('character_lab')}
-          className="group text-left rounded-xl border border-slate-200/90 bg-white/88 p-4 backdrop-blur-xl hover:bg-white shadow-xs transition-colors flex items-center justify-between gap-4"
-        >
-          <div className="space-y-1 min-w-0">
-            <div className="text-xs font-semibold text-slate-900 group-hover:text-sky-700 transition-colors">
-              查看五状态 × 15 帧分解与 DeepSeek 角色包工坊
-            </div>
-            <p className="text-xs text-slate-500 truncate">
-              当前角色：{activePack.name} · 支持绘制点阵或导入本地 .json 角色包
-            </p>
-          </div>
-          <Play className="w-4 h-4 text-slate-400 group-hover:text-sky-600 shrink-0" />
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onChangeTab('swift_source')}
-          className="group text-left rounded-xl border border-slate-200/90 bg-white/88 p-4 backdrop-blur-xl hover:bg-white shadow-xs transition-colors flex items-center justify-between gap-4"
-        >
-          <div className="space-y-1 min-w-0">
-            <div className="text-xs font-semibold text-slate-900 group-hover:text-sky-700 transition-colors">
-              获取 macOS 原生 AppKit Swift 工程代码
-            </div>
-            <p className="text-xs text-slate-500 truncate">
-              无 WebView · 无常驻后台进程 · 只读监听 ~/.local/share/opencode
-            </p>
-          </div>
-          <Download className="w-4 h-4 text-slate-400 group-hover:text-sky-600 shrink-0" />
-        </button>
-      </div>
-    </div>
+    </motion.div>
   );
 };

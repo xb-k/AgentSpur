@@ -6,20 +6,23 @@ import {
   MasterSession,
   QuotaState,
   SilentToastItem,
+  SubAgentTask,
 } from './types/agent';
 import {
   BUILTIN_CHARACTER_PACKS,
   INITIAL_QUOTA,
   INITIAL_SESSIONS,
+  INITIAL_WEEKLY_EFFICIENCY,
 } from './data/initialData';
 import { DesktopTabMode, MacMenuBar } from './components/MacMenuBar';
 import { StatusPopover } from './components/StatusPopover';
 import { DesktopWorkspace } from './components/DesktopWorkspace';
 import { SilentNotificationBanner } from './components/SilentNotificationBanner';
+import { WeeklyEfficiencyChart } from './components/WeeklyEfficiencyChart';
 
-const STORAGE_PACKS_KEY = 'agentbar_custom_packs_light_v2';
-const STORAGE_ACTIVE_PACK_KEY = 'agentbar_active_pack_id_v2';
-const STORAGE_SILENT_ALERT_KEY = 'agentbar_silent_alert_v2';
+const STORAGE_PACKS_KEY = 'agentbar_custom_packs_gin_v3';
+const STORAGE_ACTIVE_PACK_KEY = 'agentbar_active_pack_gin_v3';
+const STORAGE_SILENT_ALERT_KEY = 'agentbar_silent_alert_gin_v3';
 
 export default function App() {
   const [sessions, setSessions] = useState<MasterSession[]>(INITIAL_SESSIONS);
@@ -102,6 +105,21 @@ export default function App() {
     return AgentStatus.Completed;
   }, [menuBarFocusStatus, sessions]);
 
+  const urgentSubTask = useMemo<SubAgentTask | undefined>(() => {
+    const priorityMap: Record<AgentStatus, number> = {
+      [AgentStatus.Confirm]: 1,
+      [AgentStatus.Error]: menuBarFocusStatus === AgentStatus.Error ? 0 : 2,
+      [AgentStatus.Working]: 3,
+      [AgentStatus.Thinking]: 4,
+      [AgentStatus.Completed]: 5,
+    };
+    const allSubs = sessions.flatMap((s) => s.subTasks);
+    if (allSubs.length === 0) return undefined;
+    return [...allSubs].sort(
+      (a, b) => priorityMap[a.status] - priorityMap[b.status]
+    )[0];
+  }, [sessions, menuBarFocusStatus]);
+
   const selectedSession = useMemo(
     () => sessions.find((s) => s.id === selectedSessionId) || sessions[0],
     [sessions, selectedSessionId]
@@ -116,8 +134,8 @@ export default function App() {
   );
 
   const focusedAppLabel = useMemo(() => {
-    if (activeDesktopTab === 'character_lab') return 'AgentBar · 角色包预览';
-    if (activeDesktopTab === 'swift_source') return 'Xcode · AgentBar';
+    if (activeDesktopTab === 'character_lab') return 'AgentSpur';
+    if (activeDesktopTab === 'swift_source') return 'Xcode';
     const app = selectedSubTask
       ? selectedSubTask.targetApp
       : selectedSession.targetApp;
@@ -129,7 +147,6 @@ export default function App() {
     const now = new Date();
     const hh = String(now.getHours()).padStart(2, '0');
     const mm = String(now.getMinutes()).padStart(2, '0');
-    const ss = String(now.getSeconds()).padStart(2, '0');
 
     window.setTimeout(() => {
       setQuota((prev) => ({
@@ -138,10 +155,10 @@ export default function App() {
           0.5,
           Number((prev.remainingUsd - 0.02).toFixed(2))
         ),
-        lastRefreshedAt: `${hh}:${mm}:${ss}`,
+        lastRefreshedAt: `${hh}:${mm}`,
       }));
       setIsRefreshingQuota(false);
-    }, 220);
+    }, 200);
   }, []);
 
   useEffect(() => {
@@ -189,8 +206,8 @@ export default function App() {
       return updated;
     });
     setActivePackId(newPack.id);
-    setImportFeedback(`已载入 DeepSeek 角色包：${newPack.name}`);
-    window.setTimeout(() => setImportFeedback(null), 3200);
+    setImportFeedback(`已切换角色：${newPack.name}`);
+    window.setTimeout(() => setImportFeedback(null), 2600);
   }, []);
 
   const handleImportPackFile = useCallback(
@@ -209,7 +226,7 @@ export default function App() {
                 ? parsed.name.trim()
                 : file.name.replace(/\.json$/i, ''),
             author:
-              typeof parsed.author === 'string' ? parsed.author : 'Local User',
+              typeof parsed.author === 'string' ? parsed.author : 'Local Mac',
             version:
               typeof parsed.version === 'string' ? parsed.version : '1.0.0',
             deepseekModel:
@@ -219,8 +236,9 @@ export default function App() {
             roleDescription:
               typeof parsed.roleDescription === 'string'
                 ? parsed.roleDescription
-                : '从本地 JSON 导入的自定义 DeepSeek 角色包。',
+                : '从本地 JSON 导入的极简角色包。',
             archetype:
+              parsed.archetype === 'droplet' ||
               parsed.archetype === 'glyph' ||
               parsed.archetype === 'whale' ||
               parsed.archetype === 'neko' ||
@@ -231,19 +249,19 @@ export default function App() {
             primaryColor:
               typeof parsed.primaryColor === 'string'
                 ? parsed.primaryColor
-                : '#0369A1',
+                : '#0F172A',
             secondaryColor:
               typeof parsed.secondaryColor === 'string'
                 ? parsed.secondaryColor
-                : '#D97706',
+                : '#0EA5E9',
             customBaseSprite: Array.isArray(parsed.customBaseSprite)
               ? parsed.customBaseSprite
               : undefined,
           };
           handleImportPackObject(importedPack);
         } catch {
-          setImportFeedback('角色包 JSON 格式解析失败，请检查字段结构');
-          window.setTimeout(() => setImportFeedback(null), 3500);
+          setImportFeedback('角色包 JSON 解析失败');
+          window.setTimeout(() => setImportFeedback(null), 3000);
         }
       };
       reader.readAsText(file);
@@ -266,8 +284,8 @@ export default function App() {
       const destLabel = targetSub ? targetSub.targetRef : targetSession.targetRef;
       const nextSt = targetSub ? targetSub.status : targetSession.status;
       setMenuBarFocusStatus(nextSt);
-      setLastJumpNotice(`已唤起并定位至 ${destLabel}`);
-      window.setTimeout(() => setLastJumpNotice(null), 2600);
+      setLastJumpNotice(`已跳回 ${destLabel}`);
+      window.setTimeout(() => setLastJumpNotice(null), 2200);
     },
     [sessions]
   );
@@ -297,7 +315,7 @@ export default function App() {
       setToasts((prev) => [item, ...prev].slice(0, 3));
       window.setTimeout(() => {
         setToasts((prev) => prev.filter((t) => t.id !== id));
-      }, 5500);
+      }, 5000);
     },
     [silentAlertEnabled]
   );
@@ -328,7 +346,17 @@ export default function App() {
               ...s,
               updatedAt: '刚刚',
               subTasks: s.subTasks.map((st) =>
-                st.id === subTaskId ? { ...st, status: nextStatus } : st
+                st.id === subTaskId
+                  ? {
+                      ...st,
+                      status: nextStatus,
+                      elapsed:
+                        nextStatus === AgentStatus.Completed &&
+                        st.elapsed === '待确认'
+                          ? '1.6s'
+                          : st.elapsed,
+                    }
+                  : st
               ),
             };
           }
@@ -344,12 +372,35 @@ export default function App() {
             ...s,
             status: nextStatus,
             updatedAt: '刚刚',
+            duration:
+              nextStatus === AgentStatus.Completed
+                ? s.duration || '48s'
+                : s.duration,
           };
         })
       );
     },
     [pushSilentCompletionToast]
   );
+
+  const weeklyEfficiencyData = useMemo(() => {
+    const extraCompleted = Math.max(
+      0,
+      sessions.filter((s) => s.status === AgentStatus.Completed).length - 2
+    );
+    return INITIAL_WEEKLY_EFFICIENCY.map((pt) =>
+      pt.isToday
+        ? {
+            ...pt,
+            completedCount: pt.completedCount + extraCompleted,
+            tasksPerHour: Number(
+              (pt.tasksPerHour + extraCompleted * 0.4).toFixed(1)
+            ),
+            avgSeconds: Math.max(24, pt.avgSeconds - extraCompleted * 2),
+          }
+        : pt
+    );
+  }, [sessions]);
 
   const handleDismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -358,27 +409,28 @@ export default function App() {
   return (
     <div
       id="top"
-      className="relative min-h-screen w-full bg-slate-100 text-slate-900 flex flex-col"
+      className="relative min-h-screen w-full bg-[#F8FAFC] text-slate-900 flex flex-col"
     >
-      {/* Bright Airy macOS Sequoia Daylight Wallpaper + Soft Light Scrim */}
-      <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden bg-gradient-to-br from-sky-50 via-white to-slate-100">
+      {/* Featherlight Sunlit Daylight Backdrop */}
+      <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden bg-gradient-to-br from-white via-slate-50 to-sky-50/40">
         {!wallpaperFailed && (
           <img
             src={wallpaperUrl}
-            alt="macOS Sequoia 明亮浅色桌面背景"
+            alt="macOS 明亮极简桌面背景"
             referrerPolicy="no-referrer"
             onError={() => setWallpaperFailed(true)}
-            className="h-full w-full object-cover opacity-85"
+            className="h-full w-full object-cover opacity-65"
           />
         )}
-        <div className="absolute inset-0 bg-gradient-to-b from-white/40 via-white/25 to-slate-100/55" />
+        <div className="absolute inset-0 bg-white/45" />
       </div>
 
-      {/* Pinned Top macOS Light Menu Bar */}
+      {/* Featherlight macOS Menu Bar */}
       <MacMenuBar
         activeStatus={derivedMenuBarStatus}
         activePack={activePack}
         quota={quota}
+        urgentSubTask={urgentSubTask}
         isPopoverOpen={isPopoverOpen}
         onTogglePopover={() => setIsPopoverOpen((v) => !v)}
         isRefreshingQuota={isRefreshingQuota}
@@ -387,7 +439,7 @@ export default function App() {
         focusedAppLabel={focusedAppLabel}
       />
 
-      {/* Silent Completion Notification Banner */}
+      {/* Minimalist Silent Completion Notification */}
       <SilentNotificationBanner
         toasts={toasts}
         activePack={activePack}
@@ -395,51 +447,56 @@ export default function App() {
         onDismiss={handleDismissToast}
       />
 
-      {/* Import Feedback Banner */}
+      {/* Subtle Role Switch Feedback */}
       {importFeedback && (
-        <div className="fixed bottom-5 right-5 z-50 rounded-lg border border-slate-200 bg-white/95 px-4 py-2.5 text-xs font-medium text-slate-800 shadow-lg backdrop-blur-xl">
+        <div className="fixed bottom-5 right-5 z-50 rounded-full border border-black/[0.06] bg-white/90 px-3.5 py-1.5 text-xs font-medium text-slate-700 shadow-md backdrop-blur-2xl">
           {importFeedback}
         </div>
       )}
 
-      {/* Main 1440px Bright macOS Desktop Viewport */}
-      <main className="relative z-10 mx-auto flex w-full max-w-[1440px] flex-1 flex-col-reverse lg:flex-row items-start gap-6 px-5 py-5">
-        <DesktopWorkspace
-          activeTab={activeDesktopTab}
-          onChangeTab={setActiveDesktopTab}
-          sessions={sessions}
-          selectedSession={selectedSession}
-          selectedSubTask={selectedSubTask}
-          lastJumpNotice={lastJumpNotice}
-          activePack={activePack}
-          packs={allPacks}
-          onSelectPack={handleSelectPack}
-          onImportPackObject={handleImportPackObject}
-          onImportPackFile={handleImportPackFile}
-          onUpdateSessionStatus={handleUpdateSessionStatus}
-          onSelectSessionFromDesktop={(sId, subId) => {
-            setSelectedSessionId(sId);
-            setSelectedSubTaskId(subId);
-          }}
-        />
+      {/* Airy Minimalist Desktop Canvas */}
+      <main className="relative z-10 mx-auto flex w-full max-w-[1380px] flex-1 flex-col gap-6 px-6 py-7">
+        <div className="flex w-full flex-col-reverse lg:flex-row items-start gap-7">
+          <DesktopWorkspace
+            activeTab={activeDesktopTab}
+            onChangeTab={setActiveDesktopTab}
+            sessions={sessions}
+            selectedSession={selectedSession}
+            selectedSubTask={selectedSubTask}
+            lastJumpNotice={lastJumpNotice}
+            activePack={activePack}
+            packs={allPacks}
+            onSelectPack={handleSelectPack}
+            onImportPackObject={handleImportPackObject}
+            onImportPackFile={handleImportPackFile}
+            onUpdateSessionStatus={handleUpdateSessionStatus}
+            onSelectSessionFromDesktop={(sId, subId) => {
+              setSelectedSessionId(sId);
+              setSelectedSubTaskId(subId);
+            }}
+          />
 
-        <StatusPopover
-          isOpen={isPopoverOpen}
-          activeStatus={derivedMenuBarStatus}
-          sessions={sessions}
-          quota={quota}
-          isRefreshingQuota={isRefreshingQuota}
-          onRefreshQuota={handleRefreshQuota}
-          silentAlertEnabled={silentAlertEnabled}
-          onToggleSilentAlert={handleToggleSilentAlert}
-          packs={allPacks}
-          activePack={activePack}
-          onSelectPack={handleSelectPack}
-          onImportPackFile={handleImportPackFile}
-          selectedSessionId={selectedSessionId}
-          selectedSubTaskId={selectedSubTaskId}
-          onJumpToSession={handleJumpToSession}
-        />
+          <StatusPopover
+            isOpen={isPopoverOpen}
+            activeStatus={derivedMenuBarStatus}
+            sessions={sessions}
+            quota={quota}
+            isRefreshingQuota={isRefreshingQuota}
+            onRefreshQuota={handleRefreshQuota}
+            silentAlertEnabled={silentAlertEnabled}
+            onToggleSilentAlert={handleToggleSilentAlert}
+            packs={allPacks}
+            activePack={activePack}
+            onSelectPack={handleSelectPack}
+            onImportPackFile={handleImportPackFile}
+            selectedSessionId={selectedSessionId}
+            selectedSubTaskId={selectedSubTaskId}
+            onJumpToSession={handleJumpToSession}
+          />
+        </div>
+
+        {/* Bottom D3.js Weekly Task Processing Efficiency Line Chart */}
+        <WeeklyEfficiencyChart data={weeklyEfficiencyData} />
       </main>
     </div>
   );

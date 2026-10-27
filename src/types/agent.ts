@@ -11,7 +11,13 @@ export enum TargetApp {
   ITerm2 = 'iTerm2',
 }
 
-export type CharacterArchetype = 'glyph' | 'whale' | 'neko' | 'kitsune' | 'custom_pixel';
+export type CharacterArchetype =
+  | 'droplet'
+  | 'glyph'
+  | 'whale'
+  | 'neko'
+  | 'kitsune'
+  | 'custom_pixel';
 
 export interface CharacterPack {
   id: string;
@@ -32,10 +38,10 @@ export interface SubAgentTask {
   id: string;
   parentId: string;
   title: string;
-  subagentRole: string; // e.g. "@explore" or "@general" in opencode TUI
+  subagentRole: string;
   status: AgentStatus;
   targetApp: TargetApp;
-  targetRef: string; // e.g. "iTerm2 · Tab 2 (opencode)" or "opencode TUI · 子会话 #12-B"
+  targetRef: string;
   itermTabIndex?: number;
   elapsed: string;
   localOffset: string;
@@ -53,9 +59,19 @@ export interface MasterSession {
   itermTabIndex?: number;
   localPath: string;
   updatedAt: string;
+  duration?: string;
   summary: string;
   logLines: string[];
   subTasks: SubAgentTask[];
+}
+
+export interface WeeklyEfficiencyPoint {
+  day: string;
+  dateShort: string;
+  tasksPerHour: number;
+  avgSeconds: number;
+  completedCount: number;
+  isToday?: boolean;
 }
 
 export interface QuotaState {
