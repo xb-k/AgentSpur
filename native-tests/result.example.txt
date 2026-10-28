@@ -1,0 +1,43 @@
+# 示例结果（金额与 Key 已脱敏；实际运行 run_menu_bar_test.sh 会生成 result.txt）
+
+== AgentSpur native AX test ==
+run_at: 2026-10-28 19:26:33
+script: native-tests/ax_test.applescript
+
+=== AgentSpur native AX test ===
+time: 2026-10-28 19:26:28
+[PASS] A1 进程存在: AgentSpur
+[PASS] A2 状态项标题合法: 思考 · ¥••••
+      状态词: 思考
+[PASS] A3 AXPress 打开 Popover: role=AXPopover count=1
+      Popover description:
+      AXFocusedUIElement: AXPopover /
+      今日断言串: 今日 10/28
+[PASS] A4 Popover 文本断言: 5/5 命中，共 20 条 AXStaticText
+      --- Popover AXStaticText (20) ---
+      | AgentSpur
+      | 正在思考 7m33s
+      | 🔑 DeepSeek … ▾
+      | ↻ ⌘R
+      | 今日 10/28 · DeepSeek 环境变量Key (sk-***••)
+      | 余额 ¥•••••• · 闲时 5 折
+      | ¥••••
+      | ≈ $••••
+      | 已省 ¥••••
+      | Cache 命中率 97.3%
+      | 4,105 次 · 悬停看明细
+      | 全部 15
+      | 待处理 0
+      | 运行中 1
+      | 已完成 14
+      | 24H 趋势
+      | 00:00 - 24:00 · 悬停看明细
+      | 🐳 深海小鲸 ▾
+      | 🔔 提醒开启
+      | ✕ 退出
+      --- Popover AXStaticText end ---
+[PASS] A5 再次 AXPress 后 Popover 消失: 子元素数=0
+[PASS] A6 收尾清理: Popover 已收起
+
+RESULT: PASS 6/6
+EXIT_CODE: 0

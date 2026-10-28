@@ -1984,7 +1984,7 @@ private final class APIKeyManagerPanelContentView: NSView {
             self?.handleRescanClick()
         }
 
-        let closeBtn = CapsuleControlButton(title: "✕", fontSize: 11.2, fixedWidth: 28)
+        let closeBtn = CapsuleControlButton(title: "✕", fixedWidth: 28, fontSize: 11.2)
         closeBtn.translatesAutoresizingMaskIntoConstraints = false
         closeBtn.onPress = { [weak self] in
             self?.handleCancelClick()

@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowUpRight,
   Bell,
@@ -339,89 +340,204 @@ const PREVIEW_CONSOLES = [
   { id: 'win-7', indexLabel: '07 · Terminal #4 · docs-portal — npm run dev', shortSummary: 'Terminal · docs-portal', active: false },
 ];
 
+const STATUS_LABEL_MAP: Record<SessionStatus | 'idle', string> = {
+  working: '工作中',
+  thinking: '工作中',
+  confirm: '待确认',
+  completed: '已完成',
+  error: '异常',
+  idle: '空闲',
+};
+
+interface PointerPosition {
+  x: number;
+  y: number;
+}
+
+/**
+ * 指针跟随浮层：portal 到 document.body，彻底逃出 Popover 的 transform / 层叠上下文。
+ * 固定定位在指针「左侧 + 上方」，尺寸由 ref 实测后按视口 clamp（至少 8px 边距）。
+ */
+function PointerTooltip({
+  position,
+  children,
+}: {
+  position: PointerPosition | null;
+  children: React.ReactNode;
+}) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+
+  useLayoutEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setSize((prev) =>
+      Math.abs(prev.w - rect.width) < 0.5 && Math.abs(prev.h - rect.height) < 0.5
+        ? prev
+        : { w: rect.width, h: rect.height }
+    );
+  }, [position]);
+
+  if (!position) return null;
+
+  const GAP = 12;
+  const MARGIN = 8;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const left = Math.max(MARGIN, Math.min(position.x - size.w - GAP, vw - size.w - MARGIN));
+  const top = Math.max(MARGIN, Math.min(position.y - size.h - GAP, vh - size.h - MARGIN));
+
+  return createPortal(
+    <div
+      ref={cardRef}
+      style={{ position: 'fixed', left, top, zIndex: 9999, pointerEvents: 'none' }}
+    >
+      {children}
+    </div>,
+    document.body
+  );
+}
+
 function RolePackSpriteIcon({
   packId,
   status,
   size = 18,
 }: {
   packId: string;
-  status: SessionStatus;
+  status: SessionStatus | 'idle';
   size?: number;
 }) {
+  const [pointer, setPointer] = useState<PointerPosition | null>(null);
   const isError = status === 'error';
   const isConfirm = status === 'confirm';
   const isCompleted = status === 'completed';
+  const packLabel = ROLE_PACK_OPTIONS.find((p) => p.id === packId)?.label ?? 'AgentSpur';
+  const hoverProps: React.ComponentProps<'svg'> = {
+    onMouseMove: (e) => setPointer({ x: e.clientX, y: e.clientY }),
+    onMouseLeave: () => setPointer(null),
+  };
+
+  let icon: React.ReactNode;
 
   if (packId === 'pack-whale') {
     const bodyFill = isError ? '#E13D48' : isConfirm ? '#D97706' : '#0284C7';
     const spoutFill = isError ? '#F87171' : '#38BDF8';
-    return (
+    icon = (
       <svg
         width={size}
         height={size}
         viewBox="0 0 18 18"
         fill="none"
+        preserveAspectRatio="xMidYMid meet"
         className="aspect-square shrink-0"
         aria-hidden="true"
+        {...hoverProps}
       >
-        <circle cx="5.35" cy="2.9" r="0.9" fill={spoutFill} />
-        <circle cx="7.8" cy="3.2" r="0.75" fill={spoutFill} />
-        <path
-          d="M1.8 10.6 C1.7 6.2 4.1 4.7 7.4 4.8 C10.3 4.9 11.6 8.8 12.6 10.1 C13.6 8.4 14.9 6.4 16.1 6.5 C16.0 8.3 15.1 9.6 14.4 10.3 C15.3 10.9 16.3 11.9 16.2 13.2 C14.9 13.4 13.4 12.7 12.1 12.3 C10.2 15.3 2.2 14.9 1.8 10.6 Z"
-          fill={bodyFill}
-        />
-        <path
-          d="M2.2 11.45 Q6.2 11.75 10.4 13.45 C8.5 14.8 3.2 14.5 2.2 11.45 Z"
-          fill="#FFFFFF"
-          fillOpacity="0.82"
-        />
-        <circle cx="5.55" cy="9.05" r="1.25" fill="#FFFFFF" />
-        <circle cx="5.65" cy="9.05" r="0.68" fill="#0F1E3D" />
+        {/* 包围盒 x 1.80~16.21 · y 2.00~14.24 → 中心 (9.00, 8.12)，平移回 (9, 9) */}
+        <g transform="translate(0 0.88)">
+          <circle cx="5.35" cy="2.9" r="0.9" fill={spoutFill} />
+          <circle cx="7.8" cy="3.2" r="0.75" fill={spoutFill} />
+          <path
+            d="M1.8 10.6 C1.7 6.2 4.1 4.7 7.4 4.8 C10.3 4.9 11.6 8.8 12.6 10.1 C13.6 8.4 14.9 6.4 16.1 6.5 C16.0 8.3 15.1 9.6 14.4 10.3 C15.3 10.9 16.3 11.9 16.2 13.2 C14.9 13.4 13.4 12.7 12.1 12.3 C10.2 15.3 2.2 14.9 1.8 10.6 Z"
+            fill={bodyFill}
+          />
+          <path
+            d="M2.2 11.45 Q6.2 11.75 10.4 13.45 C8.5 14.8 3.2 14.5 2.2 11.45 Z"
+            fill="#FFFFFF"
+            fillOpacity="0.82"
+          />
+          <circle cx="5.55" cy="9.05" r="1.25" fill="#FFFFFF" />
+          <circle cx="5.65" cy="9.05" r="0.68" fill="#0F1E3D" />
+        </g>
       </svg>
     );
-  }
-
-  if (packId === 'pack-neko') {
+  } else if (packId === 'pack-neko') {
     const primary = isError ? '#E13D48' : '#0369A1';
     const eye = isError ? '#FCA5A5' : '#38BDF8';
-    return (
-      <svg width={size} height={size} viewBox="0 0 18 18" fill="none" className="aspect-square shrink-0" aria-hidden="true">
-        <rect x="4.2" y="3.8" width="2.5" height="2.5" rx="0.5" fill={primary} />
-        <rect x="11.3" y="3.8" width="2.5" height="2.5" rx="0.5" fill={primary} />
-        <rect x="4.2" y="6.0" width="9.6" height="7.8" rx="1.8" fill={primary} />
-        <rect x="6.1" y="8.8" width="1.8" height="1.8" rx="0.4" fill={eye} />
-        <rect x="10.1" y="8.8" width="1.8" height="1.8" rx="0.4" fill={eye} />
+    icon = (
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 18 18"
+        fill="none"
+        preserveAspectRatio="xMidYMid meet"
+        className="aspect-square shrink-0"
+        aria-hidden="true"
+        {...hoverProps}
+      >
+        {/* 包围盒 x 4.20~13.80 · y 3.80~13.80 → 中心 (9.00, 8.80)，宽高天然对称（dx = 0） */}
+        <g transform="translate(0 0.2)">
+          <rect x="4.2" y="3.8" width="2.5" height="2.5" rx="0.5" fill={primary} />
+          <rect x="11.3" y="3.8" width="2.5" height="2.5" rx="0.5" fill={primary} />
+          <rect x="4.2" y="6.0" width="9.6" height="7.8" rx="1.8" fill={primary} />
+          <rect x="6.1" y="8.8" width="1.8" height="1.8" rx="0.4" fill={eye} />
+          <rect x="10.1" y="8.8" width="1.8" height="1.8" rx="0.4" fill={eye} />
+        </g>
       </svg>
     );
-  }
-
-  if (packId === 'pack-kitsune') {
+  } else if (packId === 'pack-kitsune') {
     const fill = isConfirm ? '#F59E0B' : isError ? '#E13D48' : '#0284C7';
-    return (
-      <svg width={size} height={size} viewBox="0 0 18 18" fill="none" className="aspect-square shrink-0" aria-hidden="true">
-        <path d="M9 14.6 L14.4 4.8 L10.9 7.2 L7.1 7.2 L3.6 4.8 Z" fill={fill} />
-        <circle cx="7.1" cy="9.6" r="0.85" fill="#FFFFFF" />
-        <circle cx="10.9" cy="9.6" r="0.85" fill="#FFFFFF" />
+    icon = (
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 18 18"
+        fill="none"
+        preserveAspectRatio="xMidYMid meet"
+        className="aspect-square shrink-0"
+        aria-hidden="true"
+        {...hoverProps}
+      >
+        {/* 包围盒 x 3.60~14.40 · y 4.80~14.60 → 中心 (9.00, 9.70)，上移 0.7 */}
+        <g transform="translate(0 -0.7)">
+          <path d="M9 14.6 L14.4 4.8 L10.9 7.2 L7.1 7.2 L3.6 4.8 Z" fill={fill} />
+          <circle cx="7.1" cy="9.6" r="0.85" fill="#FFFFFF" />
+          <circle cx="10.9" cy="9.6" r="0.85" fill="#FFFFFF" />
+        </g>
+      </svg>
+    );
+  } else {
+    const dropletFill = isError
+      ? '#DC2626'
+      : isConfirm
+        ? '#D97706'
+        : isCompleted
+          ? '#059669'
+          : '#0284C7';
+    icon = (
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 18 18"
+        fill="none"
+        preserveAspectRatio="xMidYMid meet"
+        className="aspect-square shrink-0"
+        aria-hidden="true"
+        {...hoverProps}
+      >
+        {/* 包围盒（含 1.1 描边外扩）x 2.15~15.85 · y 2.35~16.05 → 中心 (9.00, 9.20)，上移 0.2 */}
+        <g transform="translate(0 -0.2)">
+          <circle cx="9" cy="9.2" r="6.3" stroke={dropletFill} strokeOpacity="0.24" strokeWidth="1.1" />
+          <path
+            d="M9 4.0 C10.9 6.3 12.65 8.35 12.65 10.05 C12.65 12.07 11.02 13.65 9 13.65 C6.98 13.65 5.35 12.07 5.35 10.05 C5.35 8.35 7.1 6.3 9 4.0 Z"
+            fill={dropletFill}
+          />
+          <circle cx="7.85" cy="9.55" r="0.9" fill="#FFFFFF" fillOpacity="0.92" />
+        </g>
       </svg>
     );
   }
 
-  const dropletFill = isError
-    ? '#DC2626'
-    : isConfirm
-      ? '#D97706'
-      : isCompleted
-        ? '#059669'
-        : '#0284C7';
   return (
-    <svg width={size} height={size} viewBox="0 0 18 18" fill="none" className="aspect-square shrink-0" aria-hidden="true">
-      <circle cx="9" cy="9.2" r="6.3" stroke={dropletFill} strokeOpacity="0.24" strokeWidth="1.1" />
-      <path
-        d="M9 4.0 C10.9 6.3 12.65 8.35 12.65 10.05 C12.65 12.07 11.02 13.65 9 13.65 C6.98 13.65 5.35 12.07 5.35 10.05 C5.35 8.35 7.1 6.3 9 4.0 Z"
-        fill={dropletFill}
-      />
-      <circle cx="7.85" cy="9.55" r="0.9" fill="#FFFFFF" fillOpacity="0.92" />
-    </svg>
+    <>
+      {icon}
+      <PointerTooltip position={pointer}>
+        <span className="whitespace-nowrap rounded-full border border-slate-700/80 bg-slate-900/95 px-2.5 py-1 text-[11px] font-medium text-white shadow-xl">
+          {STATUS_LABEL_MAP[status]} · {packLabel}
+        </span>
+      </PointerTooltip>
+    </>
   );
 }
 
@@ -510,7 +626,7 @@ export default function App() {
   // Sub-agents collapsed by default (empty set!)
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set());
   const [hoveredBarHour, setHoveredBarHour] = useState<number | null>(null);
-  const [showCostTooltip, setShowCostTooltip] = useState<boolean>(false);
+  const [costTooltipPos, setCostTooltipPos] = useState<PointerPosition | null>(null);
   const [toastBanner, setToastBanner] = useState<string | null>(null);
   const [isPopoverShown, setIsPopoverShown] = useState<boolean>(false);
 
@@ -646,6 +762,20 @@ export default function App() {
         : PREVIEW_SESSIONS.filter((s) => s.keyId === selectedKeyId);
     return base;
   }, [selectedKeyId]);
+
+  // 菜单栏常驻图标状态：完全由后台会话派生（与 Popover 是否展开无关），
+  // 优先级 error > confirm > working/thinking > completed > 空闲。
+  const menuBarStatus = useMemo<SessionStatus | 'idle'>(() => {
+    if (scopedSessions.length === 0) return 'idle';
+    const hasStatus = (status: SessionStatus) => scopedSessions.some((s) => s.status === status);
+    if (hasStatus('error')) return 'error';
+    if (hasStatus('confirm')) return 'confirm';
+    if (hasStatus('working') || hasStatus('thinking')) return 'working';
+    if (hasStatus('completed')) return 'completed';
+    return 'idle';
+  }, [scopedSessions]);
+
+  const menuBarStatusLabel = STATUS_LABEL_MAP[menuBarStatus];
 
   const filteredSessions = useMemo(() => {
     if (sessionFilter === 'pending') return scopedSessions.filter((s) => s.status === 'confirm');
@@ -941,10 +1071,23 @@ export default function App() {
                 }`}
               >
                 <span className="relative inline-flex items-center justify-center">
-                  <RolePackSpriteIcon packId={selectedPackId} status="working" size={18} />
-                  {menuBarMode === 'iconOnly' && (
-                    <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-white bg-sky-500" />
-                  )}
+                  <RolePackSpriteIcon packId={selectedPackId} status={menuBarStatus} size={18} />
+                  {/* 常驻 DOM：仅用透明度/颜色切换，Popover 收起时也不卸载 */}
+                  <span
+                    className={`pointer-events-none absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-white transition-all duration-150 ${
+                      menuBarMode === 'iconOnly' ? 'opacity-100' : 'opacity-0'
+                    } ${
+                      menuBarStatus === 'error'
+                        ? 'bg-rose-500'
+                        : menuBarStatus === 'confirm'
+                          ? 'bg-amber-500'
+                          : menuBarStatus === 'completed'
+                            ? 'bg-emerald-500'
+                            : menuBarStatus === 'idle'
+                              ? 'bg-slate-300'
+                              : 'bg-sky-500'
+                    }`}
+                  />
                 </span>
                 {menuBarMode === 'compactAmount' && (
                   <span className="font-mono text-[11.5px] tabular-nums">
@@ -955,7 +1098,7 @@ export default function App() {
                 )}
                 {menuBarMode === 'fullStatus' && (
                   <span className="font-mono text-[11.5px] tabular-nums">
-                    工作 · {formatMoneyDisplay(activeScope.totalCostCny, currencyMode)}
+                    {menuBarStatusLabel} · {formatMoneyDisplay(activeScope.totalCostCny, currencyMode)}
                   </span>
                 )}
               </button>
@@ -1264,8 +1407,8 @@ export default function App() {
 
               {/* 2. Minimalist Cost & Dual-Tone Cache Overview Card (Hover for Full Breakdown) */}
               <div
-                onMouseEnter={() => setShowCostTooltip(true)}
-                onMouseLeave={() => setShowCostTooltip(false)}
+                onMouseMove={(e) => setCostTooltipPos({ x: e.clientX, y: e.clientY })}
+                onMouseLeave={() => setCostTooltipPos(null)}
                 className="relative rounded-xl border border-slate-200/90 bg-white px-4 py-3.5 space-y-2.5 transition-colors hover:border-slate-300/90"
               >
                 <div className="flex items-center justify-between text-[11px] text-slate-500">
@@ -1313,9 +1456,10 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Hover Tooltip Breakdown (1:1 Flush-Centered Match with Native CostBreakdownHoverCardView) */}
-                {showCostTooltip && (
-                  <div className="pointer-events-none absolute inset-x-0 top-full mt-1.5 z-30 rounded-xl border border-slate-700/80 bg-[#0F172A]/[0.97] px-4 py-3 text-[10.8px] leading-relaxed text-slate-100 shadow-2xl space-y-1">
+                {/* Hover Tooltip Breakdown (指针跟随 · 左侧/上方优先 · portal 到 body 的 9999 层) */}
+                {costTooltipPos && (
+                  <PointerTooltip position={costTooltipPos}>
+                  <div className="pointer-events-none w-[380px] max-w-[calc(100vw-16px)] rounded-xl border border-slate-700/80 bg-[#0F172A]/[0.97] px-4 py-3 text-[10.8px] leading-relaxed text-slate-100 shadow-2xl space-y-1">
                     <div className="flex items-center justify-between border-b border-white/10 pb-1.5 mb-1">
                       <span className="font-sans text-[11.4px] font-semibold text-sky-300">
                         今日 10/28 精算透视明细
@@ -1351,6 +1495,7 @@ export default function App() {
                       <span className="text-sky-300">¥2785.36 · api.deepseek.com · sk-***01</span>
                     </div>
                   </div>
+                  </PointerTooltip>
                 )}
               </div>
 
@@ -1588,184 +1733,186 @@ export default function App() {
               </div>
 
               {/* KeyableSheetPanel Simulation (Topmost Focusable NSPanel Above NSPopover) */}
-              {apiKeySheetOpen && (
-                <div
-                  onClick={() => setApiKeySheetOpen(false)}
-                  className="absolute inset-0 z-40 flex items-center justify-center rounded-[18px] bg-slate-900/30 p-4 backdrop-blur-[2px] transition-opacity duration-150"
-                >
-                  <form
-                    onClick={(e) => e.stopPropagation()}
-                    onSubmit={handleSaveApiKeyProfile}
-                    className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl space-y-3"
+              {apiKeySheetOpen &&
+                createPortal(
+                  <div
+                    onClick={() => setApiKeySheetOpen(false)}
+                    className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm"
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[13.5px] font-bold text-slate-900">
-                        API-Key 自动读取与多分组管理
-                      </span>
-                      <div className="inline-flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => triggerToast('已重新只读扫描 opencode.db / auth.json / opencode.json')}
-                          className="inline-flex h-7 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 text-[11px] font-medium text-slate-700 hover:bg-slate-100 cursor-pointer"
-                        >
-                          <RefreshCw className="h-3 w-3 text-sky-600" />
-                          <span>重新读取DB</span>
-                        </button>
+                    <form
+                      onClick={(e) => e.stopPropagation()}
+                      onSubmit={handleSaveApiKeyProfile}
+                      className="w-full max-w-[412px] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl space-y-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[13.5px] font-bold text-slate-900">
+                          API-Key 自动读取与多分组管理
+                        </span>
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => triggerToast('已重新只读扫描 opencode.db / auth.json / opencode.json')}
+                            className="inline-flex h-7 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 text-[11px] font-medium text-slate-700 hover:bg-slate-100 cursor-pointer"
+                          >
+                            <RefreshCw className="h-3 w-3 text-sky-600" />
+                            <span>重新读取DB</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setApiKeySheetOpen(false)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <p className="text-[11px] leading-relaxed text-slate-500">
+                        已自动只读提取 <code className="font-mono text-slate-700">opencode.db</code> /{' '}
+                        <code className="font-mono text-slate-700">auth.json</code> /{' '}
+                        <code className="font-mono text-slate-700">opencode.json</code> 中的 Key；也可直接输入或点右侧「粘贴」手动补充。
+                      </p>
+
+                      <div className="space-y-1.5">
+                        <div className="text-[11px] font-semibold text-slate-600">
+                          当前可用 Key 与自动识别通道
+                        </div>
+                        <div className="max-h-28 space-y-1 overflow-y-auto rounded-xl border border-slate-200/85 bg-slate-50/80 p-1.5">
+                          {keyScopes
+                            .filter((sc) => sc.id !== '__ALL__')
+                            .map((sc) => {
+                              const active = sc.id === selectedKeyId;
+                              const nonAllCount = keyScopes.filter((k) => k.id !== '__ALL__').length;
+                              return (
+                                <div
+                                  key={sc.id}
+                                  className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-[11px] ${
+                                    active
+                                      ? 'border-sky-200 bg-sky-50 text-sky-900'
+                                      : 'border-slate-200/70 bg-white text-slate-700'
+                                  }`}
+                                >
+                                  <div className="min-w-0 truncate">
+                                    <span className="font-medium">{sc.label}</span>
+                                    <span className="mx-1.5 text-slate-300" aria-hidden="true">
+                                      ·
+                                    </span>
+                                    <span className="text-[10.5px] text-slate-500">
+                                      {sc.autoSource ? `自动 · ${sc.autoSource}` : '手动添加'}
+                                    </span>
+                                  </div>
+                                  <div className="inline-flex items-center gap-1.5 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setFormKeyName(sc.shortLabel.split(' (')[0]);
+                                        keyNameInputRef.current?.focus();
+                                      }}
+                                      className="rounded px-1.5 py-0.5 text-[10.5px] font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
+                                    >
+                                      编辑
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedKeyId(sc.id);
+                                        setApiKeySheetOpen(false);
+                                      }}
+                                      disabled={active}
+                                      className={`rounded px-1.5 py-0.5 text-[10.5px] font-semibold cursor-pointer ${
+                                        active
+                                          ? 'text-sky-600 cursor-default'
+                                          : 'text-sky-700 hover:bg-sky-50'
+                                      }`}
+                                    >
+                                      {active ? '当前' : '启用'}
+                                    </button>
+                                    {!sc.autoSource && nonAllCount > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteApiKeyProfile(sc.id)}
+                                        className="inline-flex items-center rounded p-0.5 text-rose-500 hover:bg-rose-50 cursor-pointer"
+                                        title="删除分组"
+                                      >
+                                        <Trash2 className="h-3 w-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="text-[11px] font-semibold text-slate-600">
+                          手动补充或覆盖分组（同名自动覆盖）
+                        </div>
+                        <input
+                          ref={keyNameInputRef}
+                          type="text"
+                          value={formKeyName}
+                          onChange={(e) => setFormKeyName(e.target.value)}
+                          placeholder="分组名称（如：DeepSeek 官方、个人备用Key）"
+                          className="h-8 w-full rounded-lg border border-slate-200 px-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
+                        />
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="text"
+                            value={formKeySecret}
+                            onChange={(e) => setFormKeySecret(e.target.value)}
+                            placeholder="sk-...（支持 ⌘V 或右侧一键粘贴，实时查余额）"
+                            className="h-8 min-w-0 flex-1 rounded-lg border border-slate-200 px-2.5 font-mono text-xs text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const text = await navigator.clipboard.readText();
+                                if (text.trim()) {
+                                  setFormKeySecret(text.trim());
+                                  if (!formKeyName.trim()) {
+                                    setFormKeyName(`备用Key-${keyScopes.length}`);
+                                  }
+                                  triggerToast(`已粘贴 (${maskApiKey(text.trim())})`);
+                                }
+                              } catch {
+                                triggerToast('请直接在输入框按 ⌘V 粘贴');
+                              }
+                            }}
+                            className="inline-flex h-8 shrink-0 items-center rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer"
+                          >
+                            粘贴
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          value={formKeyDir}
+                          onChange={(e) => setFormKeyDir(e.target.value)}
+                          placeholder="工作目录匹配词（可选，如 client-b 自动分账）"
+                          className="h-8 w-full rounded-lg border border-slate-200 px-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-1">
                         <button
                           type="button"
                           onClick={() => setApiKeySheetOpen(false)}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+                          className="inline-flex h-7 items-center rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
                         >
-                          <X className="h-3.5 w-3.5" />
+                          取消
                         </button>
-                      </div>
-                    </div>
-
-                    <p className="text-[11px] leading-relaxed text-slate-500">
-                      已自动只读提取 <code className="font-mono text-slate-700">opencode.db</code> /{' '}
-                      <code className="font-mono text-slate-700">auth.json</code> /{' '}
-                      <code className="font-mono text-slate-700">opencode.json</code> 中的 Key；也可直接输入或点右侧「粘贴」手动补充。
-                    </p>
-
-                    <div className="space-y-1.5">
-                      <div className="text-[11px] font-semibold text-slate-600">
-                        当前可用 Key 与自动识别通道
-                      </div>
-                      <div className="max-h-28 space-y-1 overflow-y-auto rounded-xl border border-slate-200/85 bg-slate-50/80 p-1.5">
-                        {keyScopes
-                          .filter((sc) => sc.id !== '__ALL__')
-                          .map((sc) => {
-                            const active = sc.id === selectedKeyId;
-                            const nonAllCount = keyScopes.filter((k) => k.id !== '__ALL__').length;
-                            return (
-                              <div
-                                key={sc.id}
-                                className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-[11px] ${
-                                  active
-                                    ? 'border-sky-200 bg-sky-50 text-sky-900'
-                                    : 'border-slate-200/70 bg-white text-slate-700'
-                                }`}
-                              >
-                                <div className="min-w-0 truncate">
-                                  <span className="font-medium">{sc.label}</span>
-                                  <span className="mx-1.5 text-slate-300" aria-hidden="true">
-                                    ·
-                                  </span>
-                                  <span className="text-[10.5px] text-slate-500">
-                                    {sc.autoSource ? `自动 · ${sc.autoSource}` : '手动添加'}
-                                  </span>
-                                </div>
-                                <div className="inline-flex items-center gap-1.5 shrink-0">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setFormKeyName(sc.shortLabel.split(' (')[0]);
-                                      keyNameInputRef.current?.focus();
-                                    }}
-                                    className="rounded px-1.5 py-0.5 text-[10.5px] font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
-                                  >
-                                    编辑
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setSelectedKeyId(sc.id);
-                                      setApiKeySheetOpen(false);
-                                    }}
-                                    disabled={active}
-                                    className={`rounded px-1.5 py-0.5 text-[10.5px] font-semibold cursor-pointer ${
-                                      active
-                                        ? 'text-sky-600 cursor-default'
-                                        : 'text-sky-700 hover:bg-sky-50'
-                                    }`}
-                                  >
-                                    {active ? '当前' : '启用'}
-                                  </button>
-                                  {!sc.autoSource && nonAllCount > 1 && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteApiKeyProfile(sc.id)}
-                                      className="inline-flex items-center rounded p-0.5 text-rose-500 hover:bg-rose-50 cursor-pointer"
-                                      title="删除分组"
-                                    >
-                                      <Trash2 className="h-3 w-3" />
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="text-[11px] font-semibold text-slate-600">
-                        手动补充或覆盖分组（同名自动覆盖）
-                      </div>
-                      <input
-                        ref={keyNameInputRef}
-                        type="text"
-                        value={formKeyName}
-                        onChange={(e) => setFormKeyName(e.target.value)}
-                        placeholder="分组名称（如：DeepSeek 官方、个人备用Key）"
-                        className="h-8 w-full rounded-lg border border-slate-200 px-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
-                      />
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="text"
-                          value={formKeySecret}
-                          onChange={(e) => setFormKeySecret(e.target.value)}
-                          placeholder="sk-...（支持 ⌘V 或右侧一键粘贴，实时查余额）"
-                          className="h-8 min-w-0 flex-1 rounded-lg border border-slate-200 px-2.5 font-mono text-xs text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
-                        />
                         <button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              const text = await navigator.clipboard.readText();
-                              if (text.trim()) {
-                                setFormKeySecret(text.trim());
-                                if (!formKeyName.trim()) {
-                                  setFormKeyName(`备用Key-${keyScopes.length}`);
-                                }
-                                triggerToast(`已粘贴 (${maskApiKey(text.trim())})`);
-                              }
-                            } catch {
-                              triggerToast('请直接在输入框按 ⌘V 粘贴');
-                            }
-                          }}
-                          className="inline-flex h-8 shrink-0 items-center rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer"
+                          type="submit"
+                          className="inline-flex h-7 items-center rounded-full border border-sky-300 bg-sky-50 px-3.5 text-xs font-semibold text-sky-800 hover:bg-sky-100/80 cursor-pointer"
                         >
-                          粘贴
+                          保存并启用
                         </button>
                       </div>
-                      <input
-                        type="text"
-                        value={formKeyDir}
-                        onChange={(e) => setFormKeyDir(e.target.value)}
-                        placeholder="工作目录匹配词（可选，如 client-b 自动分账）"
-                        className="h-8 w-full rounded-lg border border-slate-200 px-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-end gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => setApiKeySheetOpen(false)}
-                        className="inline-flex h-7 items-center rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
-                      >
-                        取消
-                      </button>
-                      <button
-                        type="submit"
-                        className="inline-flex h-7 items-center rounded-full border border-sky-300 bg-sky-50 px-3.5 text-xs font-semibold text-sky-800 hover:bg-sky-100/80 cursor-pointer"
-                      >
-                        保存并启用
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              )}
+                    </form>
+                  </div>,
+                  document.body
+                )}
             </div>
           </div>
 

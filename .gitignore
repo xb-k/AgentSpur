@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+
+.build/
+*.dmg
+.opencode/
+native-tests/result.txt
