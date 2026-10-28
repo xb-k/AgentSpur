@@ -1,19 +1,22 @@
 import AppKit
 import CoreServices
 import Foundation
+import ServiceManagement
 import UserNotifications
 
 @main
-final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNUserNotificationCenterDelegate {
     // 强引用持有 AppDelegate，防止 swift build -c release (-O) 下 NSApplication.weak delegate 被提前释放
     private static var sharedDelegate: AgentSpurApp?
 
     private var statusItem: NSStatusItem!
+    private var floatingBadgePanel: FloatingStatusBadgePanel?
+    private var backgroundActivityToken: NSObjectProtocol?
     private let popover = NSPopover()
     private let popoverVC = StatusPopoverViewController()
     private let dbReader = OpenCodeDBReader()
 
-    // 所有 SQLite 读取与 AppleScript/tmux 真实终端探测全部放在后台串行队列，主线程 0 阻塞！
+    // 所有 SQLite 读取与 AppleScript/tmux 真实终端探测全部放在后台串行队列，主线程 0 阻塞
     private let workerQueue = DispatchQueue(label: "com.agentspur.worker", qos: .utility)
     private var debounceWorkItem: DispatchWorkItem?
     private var isReloadingInBackground = false
@@ -28,13 +31,18 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var latestSnapshot: OpenCodeDBSnapshot
     private var cachedRealWindows: [RealTerminalWindow] = []
 
+    private var apiKeyProfiles: [APIKeyProfile] = []
+    private var selectedKeyScopeId: String = APIKeyProfile.allKeysId
+
     private var customPacks: [DeepSeekRolePack] = []
     private var activePackId: String = "pack-gin-droplet"
     private var currencyMode: CurrencyDisplayMode = .cny
     private var csvReconciliation: OfficialCSVReconciliation?
-    private var silentAlertEnabled: Bool = true
+    private var notificationsMuted: Bool = false // 默认开启通知与提示音
     private var autoFocusEnabled: Bool = true
-    private var selectedRealWindowId: String? = nil // nil 表示自动跟随当前前台活跃终端
+    private var selectedRealWindowId: String? = nil
+    private var menuBarDisplayMode: MenuBarDisplayMode = .iconOnly // 默认紧凑仅图标，减少菜单栏宽度占用
+    private var floatingBadgeMode: FloatingBadgeMode = .autoWhenOccluded // 默认智能兜底：当菜单栏被刘海屏/灵动岛挂件挤压遮挡或全屏时自动浮现右上角微胶囊
 
     private var quota = QuotaSnapshot(
         apiTotalBalance: nil,
@@ -75,6 +83,8 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 dateLabel: TimeFormatters.todayShortLabel(),
                 tier: defaultTier
             ),
+            availableKeyScopes: [],
+            effectiveProfiles: [],
             realWindows: [],
             activeDbFileName: "opencode.db",
             dbExists: false
@@ -91,6 +101,9 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             exit(ok ? 0 : 1)
         }
 
+        // 忽略 SIGHUP：即使从终端命令行直接启动，离开/关闭终端 Tab 时也绝不退出常驻进程
+        signal(SIGHUP, SIG_IGN)
+
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory) // 纯菜单栏轻量应用，无 Dock 图标
         let delegate = AgentSpurApp()
@@ -99,30 +112,58 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         app.run()
     }
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // 关闭 API-Key 子面板或收起 Popover 窗口时，绝不终止菜单栏常驻进程
+        return false
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 阻止 macOS App Nap 在切换到其他桌面/应用时冻结后台菜单栏图标刷新与 FSEvents 监听（不影响合盖休眠）
+        backgroundActivityToken = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep],
+            reason: "Keep AgentSpur menu bar status item persistent and responsive across all apps and Spaces"
+        )
+
+        installStandardEditMenu()
         loadPreferences()
         if canUseUserNotifications {
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { _, _ in }
+            let center = UNUserNotificationCenter.current()
+            center.delegate = self
+            center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         }
 
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let initialLen = (menuBarDisplayMode == .iconOnly) ? NSStatusItem.squareLength : NSStatusItem.variableLength
+        statusItem = NSStatusBar.system.statusItem(withLength: initialLen)
+        statusItem.behavior = [] // 禁止被意外拖出销毁
+        statusItem.autosaveName = "AgentSpurStatusItem" // 记忆用户 ⌘+拖拽 到右侧高优位置的布局
+        statusItem.isVisible = true
         if let btn = statusItem.button {
             btn.target = self
             btn.action = #selector(togglePopover(_:))
             btn.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            btn.imageScaling = .scaleProportionallyDown
+            btn.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
+            btn.imagePosition = (menuBarDisplayMode == .iconOnly) ? .imageOnly : .imageLeading
         }
 
         popover.behavior = .transient
         popover.animates = true
         popover.appearance = NSAppearance(named: .aqua)
+        popover.contentSize = NSSize(width: 464, height: 556)
         popover.contentViewController = popoverVC
         popover.delegate = self
 
-        // 监听应用失焦与前台应用切换，确保切换到其他窗口（点击桌面/终端/⌘Tab）时自动收起菜单卡片
+        // 监听应用失焦、前台应用切换、多桌面 Space 切换与外接显示器变化，确保菜单栏图标跨屏始终可见
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleAppDidResignActive(_:)),
             name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleActiveSpaceOrScreenChanged(_:)),
+            name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -131,15 +172,26 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             name: NSWorkspace.didActivateApplicationNotification,
             object: nil
         )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleActiveSpaceOrScreenChanged(_:)),
+            name: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil
+        )
 
         wirePopoverCallbacks()
         updateMenuBarStatusTextAndTooltip()
+        syncFloatingBadgeVisibility()
         start15FPSRunLoop()
         startFSEventsReadOnlyWatcher()
         refreshExchangeRateAndQuota(refreshTerminals: true)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let token = backgroundActivityToken {
+            ProcessInfo.processInfo.endActivity(token)
+            backgroundActivityToken = nil
+        }
         removeOutsideClickMonitor()
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
@@ -147,6 +199,20 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             FSEventStreamStop(stream)
             FSEventStreamInvalidate(stream)
             FSEventStreamRelease(stream)
+        }
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate (确保前台展开或菜单栏常驻时也能正常弹出横幅)
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        if notificationsMuted {
+            completionHandler([])
+        } else {
+            completionHandler([.banner, .list])
         }
     }
 
@@ -158,22 +224,35 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         allPacks.first(where: { $0.id == activePackId }) ?? DeepSeekRolePack.builtInPacks[0]
     }
 
-    // MARK: - Preferences Persistence
+    // MARK: - Preferences & Multi API-Key Persistence
 
     private func loadPreferences() {
-        if defaults.object(forKey: "silentAlertEnabled") != nil {
-            silentAlertEnabled = defaults.bool(forKey: "silentAlertEnabled")
+        if defaults.object(forKey: "notificationsMuted") != nil {
+            notificationsMuted = defaults.bool(forKey: "notificationsMuted")
         }
         if defaults.object(forKey: "autoFocusEnabled") != nil {
             autoFocusEnabled = defaults.bool(forKey: "autoFocusEnabled")
         }
         selectedRealWindowId = defaults.string(forKey: "selectedRealWindowId")
+        if let savedScope = defaults.string(forKey: "selectedKeyScopeId"), !savedScope.isEmpty {
+            selectedKeyScopeId = savedScope
+        }
         if let savedPackId = defaults.string(forKey: "activePackId") {
             activePackId = savedPackId
         }
         if let savedCurr = defaults.string(forKey: "currencyMode"),
            let mode = CurrencyDisplayMode(rawValue: savedCurr) {
             currencyMode = mode
+        }
+        if let savedBarMode = defaults.string(forKey: "menuBarDisplayMode"),
+           let barMode = MenuBarDisplayMode(rawValue: savedBarMode) {
+            menuBarDisplayMode = barMode
+        }
+        if let savedBadgeMode = defaults.string(forKey: "floatingBadgeMode"),
+           let bMode = FloatingBadgeMode(rawValue: savedBadgeMode) {
+            floatingBadgeMode = bMode
+        } else if defaults.object(forKey: "floatingBadgeEnabled") != nil {
+            floatingBadgeMode = defaults.bool(forKey: "floatingBadgeEnabled") ? .always : .autoWhenOccluded
         }
         let cachedRate = defaults.double(forKey: "lastKnownUsdToCnyRate")
         if cachedRate > 5.0 && cachedRate < 10.0 {
@@ -187,6 +266,33 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if let csvData = defaults.data(forKey: "officialCSVReconciliationData"),
            let decodedCSV = try? JSONDecoder().decode(OfficialCSVReconciliation.self, from: csvData) {
             csvReconciliation = decodedCSV
+        }
+        if let keyData = defaults.data(forKey: "apiKeyProfilesData"),
+           let decodedKeys = try? JSONDecoder().decode([APIKeyProfile].self, from: keyData) {
+            apiKeyProfiles = decodedKeys
+        } else if let legacyKey = defaults.string(forKey: "deepseekApiKey"), !legacyKey.isEmpty {
+            apiKeyProfiles = [
+                APIKeyProfile(
+                    id: "key-default",
+                    name: "默认主Key",
+                    rawApiKey: legacyKey,
+                    maskedKey: APIKeyProfile.makeMasked(legacyKey),
+                    directoryKeyword: ""
+                )
+            ]
+            saveApiKeyProfiles()
+        } else {
+            apiKeyProfiles = []
+        }
+    }
+
+    private var effectiveApiKeyProfiles: [APIKeyProfile] {
+        latestSnapshot.effectiveProfiles.isEmpty ? apiKeyProfiles : latestSnapshot.effectiveProfiles
+    }
+
+    private func saveApiKeyProfiles() {
+        if let data = try? JSONEncoder().encode(apiKeyProfiles) {
+            defaults.set(data, forKey: "apiKeyProfilesData")
         }
     }
 
@@ -202,12 +308,29 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popoverVC.onRefreshQuota = { [weak self] in
             self?.refreshExchangeRateAndQuota(refreshTerminals: true)
         }
-        popoverVC.onToggleCurrencyMode = { [weak self] in
+        popoverVC.onSelectCurrencyMode = { [weak self] mode in
             guard let self else { return }
-            self.currencyMode = self.currencyMode.next
-            self.defaults.set(self.currencyMode.rawValue, forKey: "currencyMode")
+            self.currencyMode = mode
+            self.defaults.set(mode.rawValue, forKey: "currencyMode")
             self.updateMenuBarStatusTextAndTooltip()
             self.renderFullPopoverIfShown()
+        }
+        popoverVC.onSelectApiKeyScope = { [weak self] scopeId in
+            guard let self else { return }
+            // O(1) 内存级切换 (<0.2ms)，绝不阻塞 Popover 或全表扫描 opencode.db
+            self.selectedKeyScopeId = scopeId
+            self.defaults.set(scopeId, forKey: "selectedKeyScopeId")
+            self.updateMenuBarStatusTextAndTooltip()
+            self.renderFullPopoverIfShown()
+            self.refreshBalanceForActiveKeyProfile()
+        }
+        popoverVC.onSaveApiKeyProfile = { [weak self] name, rawSecret, directoryKeyword in
+            guard let self else { return }
+            self.upsertApiKeyProfile(name: name, rawSecret: rawSecret, directoryKeyword: directoryKeyword)
+        }
+        popoverVC.onDeleteApiKeyProfile = { [weak self] profileId in
+            guard let self else { return }
+            self.deleteApiKeyProfile(profileId: profileId)
         }
         popoverVC.onImportOfficialCSVs = { [weak self] parsed in
             guard let self else { return }
@@ -225,10 +348,30 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self.updateMenuBarStatusTextAndTooltip()
             self.renderFullPopoverIfShown()
         }
-        popoverVC.onToggleSilentAlert = { [weak self] enabled in
+        popoverVC.onToggleNotificationsMuted = { [weak self] in
             guard let self else { return }
-            self.silentAlertEnabled = enabled
-            self.defaults.set(enabled, forKey: "silentAlertEnabled")
+            self.notificationsMuted.toggle()
+            self.defaults.set(self.notificationsMuted, forKey: "notificationsMuted")
+            if !self.notificationsMuted {
+                // 开启提醒时立即播放一声清脆原生反馈音，确保用户感知声音链路正常
+                NSSound(named: NSSound.Name("Tink"))?.play()
+                if self.canUseUserNotifications {
+                    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+                }
+            }
+            self.renderFullPopoverIfShown()
+        }
+        popoverVC.onTestNotificationSound = { [weak self] in
+            guard let self else { return }
+            if self.notificationsMuted {
+                self.notificationsMuted = false
+                self.defaults.set(false, forKey: "notificationsMuted")
+                self.renderFullPopoverIfShown()
+            }
+            self.deliverAgentNotification(
+                event: AgentNotificationEvent(kind: .completed, taskTitle: "通知与系统提示音自检正常"),
+                forcePlay: true
+            )
         }
         popoverVC.onToggleAutoFocus = { [weak self] enabled in
             guard let self else { return }
@@ -250,11 +393,11 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             self.renderFullPopoverIfShown()
         }
-        popoverVC.onSelectPack = { [weak self] selectedName in
+        popoverVC.onSelectPackId = { [weak self] packId in
             guard let self,
-                  let found = self.allPacks.first(where: { $0.name == selectedName }) else { return }
-            self.activePackId = found.id
-            self.defaults.set(found.id, forKey: "activePackId")
+                  self.allPacks.contains(where: { $0.id == packId }) else { return }
+            self.activePackId = packId
+            self.defaults.set(packId, forKey: "activePackId")
             self.renderFullPopoverIfShown()
         }
         popoverVC.onImportCustomPack = { [weak self] pack in
@@ -266,9 +409,6 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self.saveCustomPacks()
             self.renderFullPopoverIfShown()
         }
-        popoverVC.onConfigureApiKey = { [weak self] in
-            self?.promptForDeepSeekApiKey()
-        }
         popoverVC.onFilterChanged = { [weak self] in
             self?.renderFullPopoverIfShown()
         }
@@ -276,55 +416,242 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self?.closePopover(nil)
         }
         popoverVC.onModalPanelStateChange = { [weak self] showing in
-            self?.isShowingModalPanel = showing
+            guard let self else { return }
+            self.isShowingModalPanel = showing
+            // 保持 popover.behavior = .transient 不变（确保 _NSPopoverWindow.canBecomeKey 始终为 true，
+            // 让内嵌 API-Key 输入框支持焦点与 ⌘V 粘贴），同时由 popoverShouldClose(_:) 拦截意外收起。
+        }
+        popoverVC.onSelectMenuBarDisplayMode = { [weak self] mode in
+            guard let self else { return }
+            self.menuBarDisplayMode = mode
+            self.defaults.set(mode.rawValue, forKey: "menuBarDisplayMode")
+            self.updateMenuBarStatusTextAndTooltip()
+            self.syncFloatingBadgeVisibility()
+            self.renderFullPopoverIfShown()
+        }
+        popoverVC.onSelectFloatingBadgeMode = { [weak self] mode in
+            guard let self else { return }
+            self.floatingBadgeMode = mode
+            self.defaults.set(mode.rawValue, forKey: "floatingBadgeMode")
+            self.syncFloatingBadgeVisibility()
+            self.renderFullPopoverIfShown()
+        }
+        popoverVC.onToggleLaunchAtLogin = { [weak self] enabled in
+            guard let self else { return }
+            self.setLaunchAtLogin(enabled)
+            self.renderFullPopoverIfShown()
         }
         popoverVC.onQuitApp = {
             NSApplication.shared.terminate(nil)
         }
     }
 
+    // MARK: - Launch at Login (SMAppService) & All-Spaces Floating Mini Capsule
+
+    private var isLaunchAtLoginEnabled: Bool {
+        guard canUseUserNotifications else { return false }
+        return SMAppService.mainApp.status == .enabled
+    }
+
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        guard canUseUserNotifications else { return }
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            // 未签名调试态下保持静默兼容
+        }
+    }
+
+    private func defaultFloatingBadgeOrigin() -> NSPoint {
+        let visible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        return NSPoint(x: visible.maxX - 118, y: visible.maxY - 40)
+    }
+
+    /// 检测系统菜单栏图标是否因刘海屏（Camera Notch）、灵动岛挂件、过多常驻图标挤压或全屏空间而被 macOS 隐藏
+    private func isMenuBarIconLikelyOccluded() -> Bool {
+        guard let btn = statusItem?.button, let btnWin = btn.window else {
+            return true
+        }
+        if !btnWin.occlusionState.contains(.visible) {
+            return true
+        }
+        let f = btnWin.frame
+        if f.width < 4 || f.height < 4 {
+            return true
+        }
+        if let screen = btnWin.screen ?? NSScreen.main {
+            // 全屏应用空间下菜单栏自动收起时（visibleFrame 顶部逼近屏幕物理顶部），自动启用右上角微胶囊
+            if screen.frame.maxY - screen.visibleFrame.maxY < 6 {
+                return true
+            }
+            // 带刘海 MacBook 上，若右侧菜单栏已塞满图标或挂有灵动岛组件（图标被挤到右半区最左端 68pt 危险区或越过刘海右缘），判定为遮挡风险
+            if let auxRight = screen.auxiliaryTopRightArea, f.minX < auxRight.minX + 68 {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func syncFloatingBadgeVisibility() {
+        let shouldShow: Bool
+        switch floatingBadgeMode {
+        case .always:
+            shouldShow = true
+        case .off:
+            shouldShow = false
+        case .autoWhenOccluded:
+            if popover.isShown, let existing = floatingBadgePanel, existing.isVisible {
+                shouldShow = true
+            } else {
+                shouldShow = isMenuBarIconLikelyOccluded()
+            }
+        }
+
+        if shouldShow {
+            let panel: FloatingStatusBadgePanel
+            if let existing = floatingBadgePanel {
+                panel = existing
+            } else {
+                let origin: NSPoint
+                if defaults.object(forKey: "floatingBadgeOriginX") != nil {
+                    origin = NSPoint(
+                        x: defaults.double(forKey: "floatingBadgeOriginX"),
+                        y: defaults.double(forKey: "floatingBadgeOriginY")
+                    )
+                } else {
+                    origin = defaultFloatingBadgeOrigin()
+                }
+                let created = FloatingStatusBadgePanel(initialOrigin: origin)
+                created.onClickBadge = { [weak self] in
+                    self?.togglePopoverFromFloatingBadge()
+                }
+                created.onOriginSaved = { [weak self] newOrigin in
+                    guard let self else { return }
+                    self.defaults.set(Double(newOrigin.x), forKey: "floatingBadgeOriginX")
+                    self.defaults.set(Double(newOrigin.y), forKey: "floatingBadgeOriginY")
+                }
+                self.floatingBadgePanel = created
+                panel = created
+            }
+            clampFloatingBadgeToVisibleScreenIfNeeded()
+            let sprite = SpriteRenderer.renderSpriteFrame(
+                state: latestSnapshot.topState,
+                pack: activePack,
+                frame: frameIndex,
+                pointSize: 18,
+                showStatusDot: false
+            )
+            panel.updateBadge(
+                sprite: sprite,
+                amountText: currentMenuMoneyText(),
+                state: latestSnapshot.topState
+            )
+            if !panel.isVisible {
+                panel.orderFrontRegardless()
+            }
+        } else {
+            floatingBadgePanel?.orderOut(nil)
+        }
+    }
+
+    private func clampFloatingBadgeToVisibleScreenIfNeeded() {
+        guard let panel = floatingBadgePanel else { return }
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return }
+        let frame = panel.frame
+        let onAnyScreen = screens.contains { $0.visibleFrame.intersects(frame) }
+        if !onAnyScreen {
+            panel.setFrameOrigin(defaultFloatingBadgeOrigin())
+        }
+    }
+
+    // MARK: - Popover Show & Reliable Outside-Click Auto-Dismissal (.accessory App)
+
     @objc private func togglePopover(_ sender: AnyObject?) {
         guard let btn = statusItem.button else { return }
         if popover.isShown {
             closePopover(sender)
         } else {
-            openPopover(relativeTo: btn)
+            openPopover(relativeToView: btn)
         }
     }
 
-    private func openPopover(relativeTo button: NSStatusBarButton) {
-        // 先展示 _NSPopoverWindow 再调用 activate()，确保 macOS 14/15 WindowServer 将纯菜单栏 (.accessory) 应用设为活跃 Key Window
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    private func togglePopoverFromFloatingBadge() {
+        guard let badge = floatingBadgePanel else { return }
+        if popover.isShown {
+            closePopover(nil)
+        } else {
+            openPopover(relativeToView: badge.anchorView)
+        }
+    }
+
+    private func openPopover(relativeToView anchorView: NSView) {
+        isShowingModalPanel = false
+        popover.behavior = .transient
+        popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
         NSApplication.shared.activate()
         popoverVC.view.window?.makeKey()
         installOutsideClickMonitor()
         renderFullPopoverIfShown()
-        // 展开时在后台异步刷新一次真实终端标签页与今日数据库快照，绝不阻塞弹窗动画
         scheduleBackgroundReload(refreshTerminals: true, immediate: true)
     }
 
     private func closePopover(_ sender: Any?) {
+        popoverVC.forceDismissAllOverlays()
+        isShowingModalPanel = false
+        popover.behavior = .transient
         removeOutsideClickMonitor()
         if popover.isShown {
             popover.performClose(sender)
         }
     }
 
+    func popoverShouldClose(_ popover: NSPopover) -> Bool {
+        if isShowingModalPanel || popoverVC.isApiKeyModalVisible {
+            return false
+        }
+        return true
+    }
+
     func popoverDidClose(_ notification: Notification) {
+        isShowingModalPanel = false
+        popover.behavior = .transient
         removeOutsideClickMonitor()
+        syncFloatingBadgeVisibility()
     }
 
     @objc private func handleAppDidResignActive(_ notification: Notification) {
-        guard popover.isShown, !isShowingModalPanel, NSApplication.shared.modalWindow == nil else { return }
+        statusItem?.isVisible = true
+        syncFloatingBadgeVisibility()
+        guard popover.isShown,
+              !isShowingModalPanel,
+              !popoverVC.isApiKeyModalVisible,
+              NSApplication.shared.modalWindow == nil else { return }
         closePopover(nil)
     }
 
     @objc private func handleWorkspaceDidActivateApp(_ notification: Notification) {
-        guard popover.isShown, !isShowingModalPanel, NSApplication.shared.modalWindow == nil else { return }
+        statusItem?.isVisible = true
+        syncFloatingBadgeVisibility()
+        guard popover.isShown,
+              !isShowingModalPanel,
+              !popoverVC.isApiKeyModalVisible,
+              NSApplication.shared.modalWindow == nil else { return }
         if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
            app.processIdentifier != ProcessInfo.processInfo.processIdentifier {
             closePopover(nil)
         }
+    }
+
+    @objc private func handleActiveSpaceOrScreenChanged(_ notification: Notification) {
+        statusItem?.isVisible = true
+        updateMenuBarStatusTextAndTooltip()
+        clampFloatingBadgeToVisibleScreenIfNeeded()
+        syncFloatingBadgeVisibility()
     }
 
     private func installOutsideClickMonitor() {
@@ -333,12 +660,17 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in
             guard let self, self.popover.isShown else { return }
-            guard !self.isShowingModalPanel, NSApplication.shared.modalWindow == nil else { return }
+            guard NSApplication.shared.modalWindow == nil else { return }
+            // 当内嵌多 API-Key 管理卡片开启时，允许用户切换到浏览器/备忘录复制 sk-... 而不关闭弹窗
+            guard !self.isShowingModalPanel, !self.popoverVC.isApiKeyModalVisible else { return }
 
             let mouseScreenPt = NSEvent.mouseLocation
-            // 点击在状态栏图标自身区域时交给 statusItem.button 的 togglePopover 处理，避免按下关闭、抬起又重开
             if let btnWin = self.statusItem?.button?.window,
                btnWin.frame.insetBy(dx: -4, dy: -4).contains(mouseScreenPt) {
+                return
+            }
+            if let badgeWin = self.floatingBadgePanel, badgeWin.isVisible,
+               badgeWin.frame.insetBy(dx: -4, dy: -4).contains(mouseScreenPt) {
                 return
             }
             if let popWin = self.popoverVC.view.window,
@@ -367,15 +699,33 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self.tickCounter += 1
 
             let state = self.latestSnapshot.topState
-            btn.image = SpriteRenderer.renderSpriteFrame(
+            let showDot = (self.menuBarDisplayMode == .iconOnly)
+            let menuSprite = SpriteRenderer.renderSpriteFrame(
                 state: state,
                 pack: self.activePack,
                 frame: self.frameIndex,
-                pointSize: 18
+                pointSize: 18,
+                showStatusDot: showDot
             )
-            btn.imagePosition = .imageLeading
+            btn.image = menuSprite
 
-            // 浮层展开时，15 FPS 仅原地替换 NSImage 帧，不重建任何视图！
+            if let badge = self.floatingBadgePanel, badge.isVisible {
+                let badgeSprite = showDot
+                    ? SpriteRenderer.renderSpriteFrame(
+                        state: state,
+                        pack: self.activePack,
+                        frame: self.frameIndex,
+                        pointSize: 18,
+                        showStatusDot: false
+                    )
+                    : menuSprite
+                badge.updateBadge(
+                    sprite: badgeSprite,
+                    amountText: self.currentMenuMoneyText(),
+                    state: state
+                )
+            }
+
             if self.popover.isShown {
                 self.popoverVC.tickAnimationFrame(
                     topState: state,
@@ -384,9 +734,9 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 )
             }
 
-            // 每 1 秒（15 帧）轻量更新一次秒表文字与 Tooltip
             if self.tickCounter % 15 == 0 {
                 self.updateMenuBarStatusTextAndTooltip()
+                self.syncFloatingBadgeVisibility()
                 if self.popover.isShown {
                     self.popoverVC.tickOneSecondTimers(
                         topState: state,
@@ -395,13 +745,11 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 }
             }
 
-            // 每 4 秒在后台静默同步一次（兜底某些 WAL 写入未触发文件级事件，以及刷新真实前台终端高亮）
             if self.tickCounter % 60 == 0 {
                 let needTermRefresh = self.popover.isShown
                 self.scheduleBackgroundReload(refreshTerminals: needTermRefresh, immediate: true)
             }
 
-            // 每 30 分钟自动更新一次线上汇率
             if self.tickCounter % (15 * 1800) == 0 {
                 self.refreshExchangeRateOnly()
             }
@@ -411,65 +759,96 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    private func updateMenuBarStatusTextAndTooltip() {
-        guard let btn = statusItem?.button else { return }
-        let state = latestSnapshot.topState
+    private func currentEffectiveSpendCny() -> Double {
         let safeRate = max(1.0, quota.usdToCnyRate)
-        let windowBadge = DeepSeekPricingEngine.priceWindow().badgeText
+        if let csv = csvReconciliation {
+            return csv.currency == "USD" ? csv.totalCostInOriginalCurrency * safeRate : csv.totalCostInOriginalCurrency
+        }
+        return latestSnapshot.scoped(for: selectedKeyScopeId).billing.spurCostCny
+    }
 
-        let menuMoneyStr: String
-        if let apiBal = quota.apiTotalBalance {
-            let balCny = quota.apiCurrency == "USD" ? apiBal * safeRate : apiBal
-            menuMoneyStr = DeepSeekPricingEngine.formatMoney(
-                amountCny: balCny,
-                mode: currencyMode,
-                usdToCnyRate: safeRate,
-                highPrecision: false
-            )
-        } else if let csv = csvReconciliation {
-            let cny = csv.currency == "USD" ? csv.totalCostInOriginalCurrency * safeRate : csv.totalCostInOriginalCurrency
-            menuMoneyStr = DeepSeekPricingEngine.formatMoney(
-                amountCny: cny,
-                mode: currencyMode,
-                usdToCnyRate: safeRate,
-                highPrecision: true
-            )
-        } else {
-            menuMoneyStr = DeepSeekPricingEngine.formatMoney(
-                amountCny: latestSnapshot.billing.spurCostCny,
-                mode: currencyMode,
-                usdToCnyRate: safeRate,
-                highPrecision: true
-            )
+    private func currentMenuMoneyText() -> String {
+        let safeRate = max(1.0, quota.usdToCnyRate)
+        let effectiveCny = currentEffectiveSpendCny()
+        return DeepSeekPricingEngine.formatMoney(
+            amountCny: effectiveCny,
+            mode: currencyMode,
+            usdToCnyRate: safeRate,
+            highPrecision: effectiveCny > 0 && effectiveCny < 0.1
+        )
+    }
+
+    private func updateMenuBarStatusTextAndTooltip() {
+        guard let statusItem, let btn = statusItem.button else { return }
+        if !statusItem.isVisible {
+            statusItem.isVisible = true
         }
 
-        let titleStr = " \(state.label) · \(menuMoneyStr) · \(windowBadge)"
-        btn.attributedTitle = NSAttributedString(
-            string: titleStr,
-            attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-            ]
+        let state = latestSnapshot.topState
+        let safeRate = max(1.0, quota.usdToCnyRate)
+        let scoped = latestSnapshot.scoped(for: selectedKeyScopeId)
+        let effectiveCny = currentEffectiveSpendCny()
+        let menuMoneyStr = currentMenuMoneyText()
+
+        switch menuBarDisplayMode {
+        case .iconOnly:
+            if statusItem.length != NSStatusItem.squareLength {
+                statusItem.length = NSStatusItem.squareLength
+            }
+            if !btn.title.isEmpty {
+                btn.title = ""
+            }
+            btn.imagePosition = .imageOnly
+
+        case .compactAmount:
+            if statusItem.length != NSStatusItem.variableLength {
+                statusItem.length = NSStatusItem.variableLength
+            }
+            let rawVal = (currencyMode == .cny) ? effectiveCny : (effectiveCny / safeRate)
+            let shortStr = rawVal >= 10.0
+                ? "\(currencyMode.symbol)\(Int(rawVal.rounded()))"
+                : String(format: "%@%.1f", currencyMode.symbol, rawVal)
+            btn.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
+            btn.title = " \(shortStr)"
+            btn.imagePosition = .imageLeading
+
+        case .fullStatus:
+            if statusItem.length != NSStatusItem.variableLength {
+                statusItem.length = NSStatusItem.variableLength
+            }
+            let fullStr = state.isActiveRunning ? " \(state.label) · \(menuMoneyStr)" : " \(menuMoneyStr)"
+            btn.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
+            btn.title = fullStr
+            btn.imagePosition = .imageLeading
+        }
+
+        btn.image = SpriteRenderer.renderSpriteFrame(
+            state: state,
+            pack: activePack,
+            frame: frameIndex,
+            pointSize: 18,
+            showStatusDot: menuBarDisplayMode == .iconOnly
         )
 
-        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-        let b = latestSnapshot.billing
+        let b = scoped.billing
         let fxInfo = String(
-            format: "今日精算 ¥%.4f · Cache命中 %.1f%% (已省 ¥%.2f) · 汇率 $1=¥%.4f",
+            format: "%@ · 今日精算 ¥%.4f · Cache %.1f%% · 汇率 $1=¥%.4f",
+            scoped.title,
             b.spurCostCny,
             b.cacheHitRatePercent,
-            b.cacheSavedCny,
             safeRate
         )
+        let dragHint = "按住 ⌘ 键可将图标向右拖到控制中心旁，防止切屏被菜单挤压"
         if let urgent = latestSnapshot.urgentSubTask {
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
             let timerStr = TimeFormatters.liveStateTimerLabel(
                 state: urgent.state,
                 enteredAtMs: urgent.stateEnteredAtMs,
                 nowMs: nowMs
             )
-            let consoleName = urgent.matchedWindow?.popupMenuTitle ?? urgent.consoleBadgeText
-            btn.toolTip = "AgentSpur 当前任务：\(urgent.title)\n控制台：\(consoleName) · \(timerStr)\n\(fxInfo)"
+            btn.toolTip = "AgentSpur · \(urgent.title) (\(timerStr))\n\(fxInfo)\n\(dragHint)"
         } else {
-            btn.toolTip = "AgentSpur · \(latestSnapshot.activeDbFileName) 今日实时只读监控\n\(fxInfo)"
+            btn.toolTip = "AgentSpur 菜单栏精算监控\n\(fxInfo)\n\(dragHint)"
         }
     }
 
@@ -477,6 +856,8 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard popover.isShown else { return }
         popoverVC.renderSnapshot(
             snapshot: latestSnapshot,
+            apiKeyProfiles: effectiveApiKeyProfiles,
+            selectedKeyScopeId: selectedKeyScopeId,
             quota: quota,
             currencyMode: currencyMode,
             csvReconciliation: csvReconciliation,
@@ -485,17 +866,21 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             frameIndex: frameIndex,
             autoFocusEnabled: autoFocusEnabled,
             selectedWindowId: selectedRealWindowId,
-            silentAlertEnabled: silentAlertEnabled
+            notificationsMuted: notificationsMuted,
+            menuBarDisplayMode: menuBarDisplayMode,
+            floatingBadgeMode: floatingBadgeMode,
+            launchAtLoginEnabled: isLaunchAtLoginEnabled
         )
     }
 
-    // MARK: - Background Debounced SQLite & Real Console Reload (Zero Main-Thread Blocking)
+    // MARK: - Background Debounced SQLite & Real Console Reload
 
     private func scheduleBackgroundReload(refreshTerminals: Bool, immediate: Bool = false) {
         debounceWorkItem?.cancel()
         let delay: TimeInterval = immediate ? 0.02 : 0.45
 
         let rateCopy = quota.usdToCnyRate
+        let profilesCopy = apiKeyProfiles
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.workerQueue.async { [weak self] in
@@ -511,24 +896,37 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     windows = self.cachedRealWindows
                 }
 
-                var completedTitles: [String] = []
+                var pendingEvents: [AgentNotificationEvent] = []
                 let snap = self.dbReader.readSnapshot(
                     usdToCnyRate: rateCopy,
+                    configuredProfiles: profilesCopy,
                     realWindows: windows
-                ) { title in
-                    completedTitles.append(title)
+                ) { ev in
+                    pendingEvents.append(ev)
                 }
 
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
+                    let prevKeys = Set(self.effectiveApiKeyProfiles.map { $0.rawApiKey }.filter { !$0.isEmpty })
                     let changed = (snap != self.latestSnapshot)
                     self.latestSnapshot = snap
-                    for t in completedTitles {
-                        self.postSilentCompletionNotification(taskTitle: t)
+                    let nextKeys = Set(self.effectiveApiKeyProfiles.map { $0.rawApiKey }.filter { !$0.isEmpty })
+
+                    // 若原本选中的分组已不存在，自动平滑回退至全部 Key
+                    if self.selectedKeyScopeId != APIKeyProfile.allKeysId,
+                       !snap.availableKeyScopes.contains(where: { $0.keyId == self.selectedKeyScopeId }) {
+                        self.selectedKeyScopeId = APIKeyProfile.allKeysId
+                    }
+
+                    for ev in pendingEvents {
+                        self.deliverAgentNotification(event: ev, forcePlay: false)
                     }
                     if changed {
                         self.updateMenuBarStatusTextAndTooltip()
                         self.renderFullPopoverIfShown()
+                    }
+                    if nextKeys != prevKeys || (self.quota.apiTotalBalance == nil && !nextKeys.isEmpty && changed) {
+                        self.refreshBalanceForActiveKeyProfile()
                     }
                 }
             }
@@ -543,6 +941,12 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try? FileManager.default.createDirectory(atPath: dirPath, withIntermediateDirectories: true)
         }
 
+        var watchDirs: [String] = [dirPath]
+        let configDir = ("~/.config/opencode" as NSString).expandingTildeInPath
+        if FileManager.default.fileExists(atPath: configDir), !watchDirs.contains(configDir) {
+            watchDirs.append(configDir)
+        }
+
         var context = FSEventStreamContext(
             version: 0,
             info: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()),
@@ -550,7 +954,7 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             release: nil,
             copyDescription: nil
         )
-        let paths = [dirPath] as CFArray
+        let paths = watchDirs as CFArray
         let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
             guard let info else { return }
             let app = Unmanaged<AgentSpurApp>.fromOpaque(info).takeUnretainedValue()
@@ -572,7 +976,7 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    // MARK: - Online Exchange Rate + DeepSeek Quota Refresh (`⌘R`)
+    // MARK: - Online Exchange Rate + Per-Key Balance Refresh (`⌘R`)
 
     private func refreshExchangeRateOnly() {
         DeepSeekPricingEngine.fetchLiveUsdToCnyRate { [weak self] rate, source in
@@ -588,84 +992,186 @@ final class AgentSpurApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         quota.lastRefreshedHHMM = TimeFormatters.currentHHMM()
         refreshExchangeRateOnly()
         scheduleBackgroundReload(refreshTerminals: refreshTerminals, immediate: true)
+        refreshBalanceForActiveKeyProfile()
+    }
 
-        let envKey = ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"]
-        let savedKey = defaults.string(forKey: "deepseekApiKey")
-        let effectiveKey = (savedKey?.isEmpty == false ? savedKey : envKey) ?? ""
+    private func refreshBalanceForActiveKeyProfile() {
+        let allEffective = effectiveApiKeyProfiles
+        let matchedProfile: APIKeyProfile?
+        if selectedKeyScopeId == APIKeyProfile.allKeysId {
+            matchedProfile = allEffective.first(where: { !$0.rawApiKey.isEmpty })
+        } else {
+            matchedProfile = allEffective.first(where: { $0.id == selectedKeyScopeId && !$0.rawApiKey.isEmpty })
+                ?? allEffective.first(where: { !$0.rawApiKey.isEmpty })
+        }
 
-        if !effectiveKey.isEmpty, let url = URL(string: "https://api.deepseek.com/user/balance") {
-            var req = URLRequest(url: url)
-            req.setValue("Bearer \(effectiveKey)", forHTTPHeaderField: "Authorization")
-            req.timeoutInterval = 6
+        let envKey = ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"] ?? ""
+        let effectiveKey = matchedProfile?.rawApiKey ?? (selectedKeyScopeId == APIKeyProfile.allKeysId ? envKey : "")
 
-            URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
-                guard let self else { return }
-                if let data,
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let infos = json["balance_infos"] as? [[String: Any]],
-                   let first = infos.first,
-                   let totalStr = first["total_balance"] as? String,
-                   let totalVal = Double(totalStr) {
-                    let curr = ((first["currency"] as? String) ?? "CNY").uppercased()
-                    let paidStr = (first["topped_up_balance"] as? String) ?? totalStr
-                    let grantedStr = (first["granted_balance"] as? String) ?? "0.00"
-                    let walletLabel = (Double(grantedStr) ?? 0) > 0
-                        ? "Paid \(paidStr) · Granted \(grantedStr)"
-                        : "Paid"
-                    DispatchQueue.main.async {
-                        self.quota.apiTotalBalance = totalVal
-                        self.quota.apiCurrency = curr
-                        self.quota.walletBreakdownLabel = walletLabel
-                        self.updateMenuBarStatusTextAndTooltip()
-                        self.renderFullPopoverIfShown()
-                    }
-                    return
-                }
+        guard !effectiveKey.isEmpty, let url = URL(string: "https://api.deepseek.com/user/balance") else {
+            quota.apiTotalBalance = nil
+            quota.balanceSourceLabel = ""
+            updateMenuBarStatusTextAndTooltip()
+            renderFullPopoverIfShown()
+            return
+        }
+
+        let sourceDesc: String
+        if let prof = matchedProfile {
+            let shortTag = prof.maskedKey.isEmpty ? prof.name : prof.maskedKey
+            if let autoSrc = prof.autoSource, !autoSrc.isEmpty {
+                sourceDesc = "官方接口 · \(shortTag) (\(autoSrc))"
+            } else {
+                sourceDesc = "官方接口 · \(shortTag)"
+            }
+        } else {
+            sourceDesc = "官方接口 · \(APIKeyProfile.makeMasked(effectiveKey)) (ENV)"
+        }
+
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(effectiveKey)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 6
+
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+            guard let self else { return }
+            if let data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let infos = json["balance_infos"] as? [[String: Any]],
+               let first = infos.first,
+               let totalStr = first["total_balance"] as? String,
+               let totalVal = Double(totalStr) {
+                let curr = ((first["currency"] as? String) ?? "CNY").uppercased()
+                let paidStr = (first["topped_up_balance"] as? String) ?? totalStr
+                let grantedStr = (first["granted_balance"] as? String) ?? "0.00"
+                let walletLabel = (Double(grantedStr) ?? 0) > 0
+                    ? "Paid \(paidStr) · Granted \(grantedStr)"
+                    : "Paid \(paidStr)"
                 DispatchQueue.main.async {
-                    self.quota.apiTotalBalance = nil
+                    self.quota.apiTotalBalance = totalVal
+                    self.quota.apiCurrency = curr
+                    self.quota.walletBreakdownLabel = walletLabel
+                    self.quota.balanceSourceLabel = sourceDesc
                     self.updateMenuBarStatusTextAndTooltip()
                     self.renderFullPopoverIfShown()
                 }
-            }.resume()
+                return
+            }
+            DispatchQueue.main.async {
+                self.quota.apiTotalBalance = nil
+                self.quota.balanceSourceLabel = ""
+                self.updateMenuBarStatusTextAndTooltip()
+                self.renderFullPopoverIfShown()
+            }
+        }.resume()
+    }
+
+    // MARK: - In-Popover Multi API-Key Persistence + Standard Edit Menu (Cmd+C / Cmd+V / Cmd+A)
+
+    private func installStandardEditMenu() {
+        let mainMenu = NSMenu()
+        let editMenuItem = NSMenuItem()
+        mainMenu.addItem(editMenuItem)
+
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenuItem.submenu = editMenu
+        NSApplication.shared.mainMenu = mainMenu
+    }
+
+    private func upsertApiKeyProfile(name: String, rawSecret: String, directoryKeyword: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName = trimmedName.isEmpty ? "默认主Key" : trimmedName
+        let cleanSecret = rawSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+        let masked = cleanSecret.isEmpty ? "" : APIKeyProfile.makeMasked(cleanSecret)
+        let cleanKeyword = directoryKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let matchedAuto = latestSnapshot.effectiveProfiles.first(where: {
+            $0.name == finalName || (!cleanSecret.isEmpty && $0.rawApiKey == cleanSecret)
+        })
+
+        if let idx = apiKeyProfiles.firstIndex(where: {
+            $0.name == finalName || (!cleanSecret.isEmpty && $0.rawApiKey == cleanSecret)
+        }) {
+            if !cleanSecret.isEmpty || apiKeyProfiles[idx].rawApiKey.isEmpty {
+                apiKeyProfiles[idx].rawApiKey = cleanSecret
+                apiKeyProfiles[idx].maskedKey = masked
+            }
+            apiKeyProfiles[idx].name = finalName
+            apiKeyProfiles[idx].directoryKeyword = cleanKeyword
+            if let auto = matchedAuto, apiKeyProfiles[idx].providerId.isEmpty {
+                apiKeyProfiles[idx].providerId = auto.providerId
+            }
+            selectedKeyScopeId = apiKeyProfiles[idx].id
         } else {
-            quota.apiTotalBalance = nil
-            updateMenuBarStatusTextAndTooltip()
-            renderFullPopoverIfShown()
+            let newId = matchedAuto?.id ?? "key-\(UUID().uuidString.prefix(8))"
+            let finalSecret = cleanSecret.isEmpty ? (matchedAuto?.rawApiKey ?? "") : cleanSecret
+            let finalMasked = finalSecret.isEmpty ? "" : APIKeyProfile.makeMasked(finalSecret)
+            let profile = APIKeyProfile(
+                id: newId,
+                name: finalName,
+                rawApiKey: finalSecret,
+                maskedKey: finalMasked,
+                directoryKeyword: cleanKeyword,
+                providerId: matchedAuto?.providerId ?? "",
+                autoSource: matchedAuto?.autoSource
+            )
+            apiKeyProfiles.append(profile)
+            selectedKeyScopeId = newId
         }
+
+        defaults.set(selectedKeyScopeId, forKey: "selectedKeyScopeId")
+        saveApiKeyProfiles()
+        refreshExchangeRateAndQuota(refreshTerminals: false)
     }
 
-    private func promptForDeepSeekApiKey() {
-        isShowingModalPanel = true
-        defer {
-            isShowingModalPanel = false
-            NSApplication.shared.activate()
+    private func deleteApiKeyProfile(profileId: String) {
+        apiKeyProfiles.removeAll(where: { $0.id == profileId })
+        if selectedKeyScopeId == profileId {
+            selectedKeyScopeId = APIKeyProfile.allKeysId
+            defaults.set(selectedKeyScopeId, forKey: "selectedKeyScopeId")
         }
-
-        let alert = NSAlert()
-        alert.messageText = "配置 DeepSeek 余额查询 Key (可选)"
-        alert.informativeText = "填入后按 ⌘R 将直连 DeepSeek 官方接口读取 Paid / Granted 钱包余额；留空则默认只展示今日 opencode.db 精算开销。"
-        alert.addButton(withTitle: "保存并刷新")
-        alert.addButton(withTitle: "取消")
-
-        let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        input.placeholderString = "sk-..."
-        input.stringValue = defaults.string(forKey: "deepseekApiKey") ?? ""
-        alert.accessoryView = input
-
-        NSApplication.shared.activate()
-        if alert.runModal() == .alertFirstButtonReturn {
-            let trimmed = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            defaults.set(trimmed, forKey: "deepseekApiKey")
-            refreshExchangeRateAndQuota(refreshTerminals: false)
-        }
+        saveApiKeyProfiles()
+        refreshExchangeRateAndQuota(refreshTerminals: false)
     }
 
-    private func postSilentCompletionNotification(taskTitle: String) {
-        guard silentAlertEnabled, canUseUserNotifications else { return }
+    // MARK: - Reliable Native Audio + macOS Notification Delivery
+
+    private func deliverAgentNotification(event: AgentNotificationEvent, forcePlay: Bool) {
+        guard forcePlay || !notificationsMuted else { return }
+
+        // 1. 直接通过 AppKit NSSound 播放 macOS 原生系统音效（即使未授予通知声音权限或前台焦点状态下也 100% 响亮清脆）
+        let soundName: String
+        let titleText: String
+        switch event.kind {
+        case .completed:
+            soundName = "Glass"
+            titleText = "AgentSpur · 任务已完成"
+        case .confirmNeeded:
+            soundName = "Ping"
+            titleText = "AgentSpur · 等待你的确认"
+        case .errorOccurred:
+            soundName = "Basso"
+            titleText = "AgentSpur · 任务执行出错"
+        }
+        if let sysSound = NSSound(named: NSSound.Name(soundName)) {
+            sysSound.stop()
+            sysSound.play()
+        } else {
+            NSSound.beep()
+        }
+
+        // 2. 投递原生 macOS 通知中心横幅 (配合 UNUserNotificationCenterDelegate 在前台亦可弹出)
+        guard canUseUserNotifications else { return }
         let content = UNMutableNotificationContent()
-        content.title = "AgentSpur · 任务已完成"
-        content.body = taskTitle
-        content.sound = nil
+        content.title = titleText
+        content.body = event.taskTitle
+        content.sound = nil // 声音已由上方 NSSound 精准播放，避免双重回声
         let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(req)
     }

@@ -15,7 +15,7 @@ enum AgentRunState: String, Codable, CaseIterable {
         case .thinking:  return "思考"
         case .working:   return "工作"
         case .confirm:   return "等你确认"
-        case .completed: return "完成"
+        case .completed: return "空闲"
         case .error:     return "出错"
         }
     }
@@ -30,7 +30,7 @@ enum AgentRunState: String, Codable, CaseIterable {
         }
     }
 
-    /// 实时运行态聚合优先级：任何正在活跃执行的任务（等你确认 > 正在工作 > 正在思考）绝对优先于已停止的历史报错子任务！
+    /// 实时运行态聚合优先级：任何正在活跃执行的任务（等你确认 > 正在工作 > 正在思考）绝对优先于已停止的历史报错子任务
     var activeFirstRank: Int {
         switch self {
         case .confirm:   return 50
@@ -48,12 +48,127 @@ enum AgentRunState: String, Codable, CaseIterable {
     var accentColor: NSColor {
         switch self {
         case .thinking:  return NSColor(srgbRed: 0.01, green: 0.52, blue: 0.78, alpha: 1.0) // Sky 600
-        case .working:   return NSColor(srgbRed: 0.02, green: 0.38, blue: 0.65, alpha: 1.0) // Ocean 700
+        case .working:   return NSColor(srgbRed: 0.02, green: 0.44, blue: 0.72, alpha: 1.0) // Ocean 700
         case .confirm:   return NSColor(srgbRed: 0.85, green: 0.47, blue: 0.02, alpha: 1.0) // Amber 600
-        case .completed: return NSColor(srgbRed: 0.05, green: 0.60, blue: 0.35, alpha: 1.0) // Emerald 600
+        case .completed: return NSColor(srgbRed: 0.06, green: 0.62, blue: 0.40, alpha: 1.0) // Emerald 600
         case .error:     return NSColor(srgbRed: 0.86, green: 0.15, blue: 0.15, alpha: 1.0) // Rose 600
         }
     }
+
+    var pillBackgroundColor: NSColor {
+        switch self {
+        case .thinking, .working:
+            return NSColor(srgbRed: 0.93, green: 0.97, blue: 1.00, alpha: 1.0)
+        case .confirm:
+            return NSColor(srgbRed: 1.00, green: 0.97, blue: 0.91, alpha: 1.0)
+        case .completed:
+            return NSColor(srgbRed: 0.94, green: 0.98, blue: 0.96, alpha: 1.0)
+        case .error:
+            return NSColor(srgbRed: 1.00, green: 0.94, blue: 0.94, alpha: 1.0)
+        }
+    }
+
+    var pillBorderColor: NSColor {
+        switch self {
+        case .thinking, .working:
+            return NSColor(srgbRed: 0.73, green: 0.90, blue: 0.99, alpha: 0.9)
+        case .confirm:
+            return NSColor(srgbRed: 0.98, green: 0.82, blue: 0.55, alpha: 0.9)
+        case .completed:
+            return NSColor(srgbRed: 0.72, green: 0.92, blue: 0.82, alpha: 0.9)
+        case .error:
+            return NSColor(srgbRed: 0.98, green: 0.74, blue: 0.74, alpha: 0.9)
+        }
+    }
+}
+
+// MARK: - Notification Event
+
+struct AgentNotificationEvent: Equatable {
+    enum Kind: Equatable {
+        case completed
+        case confirmNeeded
+        case errorOccurred
+    }
+    let kind: Kind
+    let taskTitle: String
+}
+
+// MARK: - Multi API-Key Profile & O(1) Pre-Aggregated Scoped Telemetry
+
+struct APIKeyProfile: Codable, Equatable {
+    static let allKeysId = "__ALL__"
+
+    let id: String
+    var name: String              // 如 "DeepSeek 官方"、"默认主Key"
+    var rawApiKey: String         // 完整 sk-... 用于查询实时余额（仅存本机内存/偏好）
+    var maskedKey: String         // 如 "sk-***01"
+    var directoryKeyword: String  // 可选：工作目录或通道匹配词
+    var providerId: String        // 关联 opencode.db message.data.$.providerID
+    var autoSource: String?       // 如 "opencode.db"、"auth.json"、"opencode.json"
+
+    init(
+        id: String,
+        name: String,
+        rawApiKey: String,
+        maskedKey: String,
+        directoryKeyword: String,
+        providerId: String = "",
+        autoSource: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.rawApiKey = rawApiKey
+        self.maskedKey = maskedKey
+        self.directoryKeyword = directoryKeyword
+        self.providerId = providerId
+        self.autoSource = autoSource
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, rawApiKey, maskedKey, directoryKeyword, providerId, autoSource
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.rawApiKey = (try? c.decodeIfPresent(String.self, forKey: .rawApiKey)) ?? ""
+        self.maskedKey = (try? c.decodeIfPresent(String.self, forKey: .maskedKey)) ?? ""
+        self.directoryKeyword = (try? c.decodeIfPresent(String.self, forKey: .directoryKeyword)) ?? ""
+        self.providerId = (try? c.decodeIfPresent(String.self, forKey: .providerId)) ?? ""
+        self.autoSource = try? c.decodeIfPresent(String.self, forKey: .autoSource)
+    }
+
+    var isAutoDiscovered: Bool {
+        autoSource != nil
+    }
+
+    var displayTitle: String {
+        if maskedKey.isEmpty {
+            return name
+        }
+        if name.contains(maskedKey) {
+            return name
+        }
+        return "\(name) (\(maskedKey))"
+    }
+
+    static func makeMasked(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 6 else { return trimmed }
+        let prefix = String(trimmed.prefix(3))
+        let suffix = String(trimmed.suffix(2))
+        return "\(prefix)***\(suffix)"
+    }
+}
+
+struct KeyScopedTelemetry: Equatable {
+    let keyId: String
+    let title: String
+    let billing: BillingTelemetrySummary
+    let todayHourlySeries: [TodayHourlyPoint]
+    let masters: [MasterSessionItem]
 }
 
 // MARK: - Real Discovered Console Window / Tab / tmux Pane (Zero Fake Data)
@@ -79,6 +194,29 @@ struct RealTerminalWindow: Equatable {
         return "\(appKind.rawValue) #\(tabIndex) · \(cleanTitle)"
     }
 
+    func indexedMenuTitle(index: Int) -> String {
+        let dirName = (workingDirectory as NSString).lastPathComponent
+        let baseTitle: String
+        if !dirName.isEmpty && !title.lowercased().contains(dirName.lowercased()) {
+            baseTitle = "\(dirName) · \(title)"
+        } else {
+            baseTitle = title
+        }
+        let cleanTitle = baseTitle.count > 30 ? String(baseTitle.prefix(30)) + "…" : baseTitle
+        let tabTag = tabIndex > 1 ? "#\(tabIndex)" : ""
+        return String(format: "%02d · %@%@ · %@", index, appKind.rawValue, tabTag, cleanTitle)
+    }
+
+    var shortTargetSummary: String {
+        let dirName = (workingDirectory as NSString).lastPathComponent
+        if !dirName.isEmpty {
+            let shortDir = dirName.count > 10 ? String(dirName.prefix(10)) + "…" : dirName
+            return "\(appKind.rawValue)·\(shortDir)"
+        }
+        let shortTitle = title.count > 10 ? String(title.prefix(10)) + "…" : title
+        return "\(appKind.rawValue)·\(shortTitle)"
+    }
+
     var shortBadge: String {
         if appKind == .tmux {
             let shortWin = windowId.count > 12 ? String(windowId.prefix(12)) : windowId
@@ -94,6 +232,10 @@ enum CurrencyDisplayMode: String, CaseIterable {
     case cny = "CNY"
     case usd = "USD"
 
+    var symbol: String {
+        self == .cny ? "¥" : "$"
+    }
+
     var toggleButtonTitle: String {
         switch self {
         case .cny: return "¥ CNY"
@@ -106,13 +248,41 @@ enum CurrencyDisplayMode: String, CaseIterable {
     }
 }
 
+enum MenuBarDisplayMode: String, Codable, CaseIterable {
+    case iconOnly      = "iconOnly"      // 仅灵动图标 (22pt 紧凑宽度，默认开启，防切屏被 Chrome/IDE 长菜单或刘海屏折叠隐藏)
+    case compactAmount = "compactAmount" // 图标 + 简短金额 (如 ¥46)
+    case fullStatus    = "fullStatus"    // 图标 + 状态与完整金额 (适合外接宽屏显示器)
+
+    var settingsTitle: String {
+        switch self {
+        case .iconOnly:      return "菜单栏：仅灵动图标（防切屏隐藏）"
+        case .compactAmount: return "菜单栏：图标 + 简短金额"
+        case .fullStatus:    return "菜单栏：图标 + 状态与金额"
+        }
+    }
+}
+
+enum FloatingBadgeMode: String, Codable, CaseIterable {
+    case autoWhenOccluded = "autoWhenOccluded" // 默认：检测到菜单栏被刘海屏/长菜单挤压隐藏或进入全屏空间时，自动弹出右上角微胶囊
+    case always           = "always"           // 始终显示跨屏常驻微胶囊
+    case off              = "off"              // 关闭桌面微胶囊（仅使用系统菜单栏图标）
+
+    var settingsTitle: String {
+        switch self {
+        case .autoWhenOccluded: return "刘海遮挡/全屏时自动悬浮胶囊"
+        case .always:           return "始终显示跨屏常驻悬浮胶囊"
+        case .off:              return "关闭桌面悬浮胶囊（仅菜单栏）"
+        }
+    }
+}
+
 enum BeijingPriceWindow {
     case offPeak // 闲时 50% 折扣 (夜间 18:00-09:00、午休 12:00-14:00、周末及中国法定节假日全天)
     case peak    // 忙时原价 (工作日 09:00-12:00, 14:00-18:00 UTC+8)
 
     var badgeText: String {
         switch self {
-        case .offPeak: return "闲时5折"
+        case .offPeak: return "闲时 5 折"
         case .peak:    return "忙时原价"
         }
     }
@@ -145,7 +315,7 @@ enum DeepSeekModelTier {
 
 /// 今日使用情况精算与 Cache 深度透视汇总（100% 扫描今日全量消息 + 自动去重思维链不双计）
 struct BillingTelemetrySummary: Equatable {
-    let dateLabel: String             // 如 "今日 10/27"
+    let dateLabel: String             // 如 "今日 10/28"
     let dominantModelId: String
     let dominantModelSpec: String
     let inputCacheHitTokens: Int64    // amount.csv -> input_cache_hit_tokens
@@ -265,6 +435,17 @@ enum CharacterArchetype: String, Codable {
     case neko         = "neko"
     case kitsune      = "kitsune"
     case customPixel  = "custom_pixel"
+
+    var badgeEmoji: String {
+        switch self {
+        case .droplet:     return "💧"
+        case .glyph:       return "◎"
+        case .whale:       return "🐳"
+        case .neko:        return "🐱"
+        case .kitsune:     return "🦊"
+        case .customPixel: return "👾"
+        }
+    }
 }
 
 struct DeepSeekRolePack: Codable, Equatable {
@@ -279,6 +460,10 @@ struct DeepSeekRolePack: Codable, Equatable {
     let secondaryColor: String
     let customBaseSprite: [String]?
 
+    var menuTitle: String {
+        "\(archetype.badgeEmoji) \(name)"
+    }
+
     static let builtInPacks: [DeepSeekRolePack] = [
         DeepSeekRolePack(
             id: "pack-gin-droplet",
@@ -290,18 +475,6 @@ struct DeepSeekRolePack: Codable, Equatable {
             archetype: .droplet,
             primaryColor: "#0284C7",
             secondaryColor: "#38BDF8",
-            customBaseSprite: nil
-        ),
-        DeepSeekRolePack(
-            id: "pack-appkit-glyph",
-            name: "AppKit 极简线条",
-            author: "macOS HIG",
-            version: "1.0.0",
-            deepseekModel: "deepseek-flash",
-            roleDescription: "纯净几何线条，零视觉负担",
-            archetype: .glyph,
-            primaryColor: "#1E293B",
-            secondaryColor: "#0EA5E9",
             customBaseSprite: nil
         ),
         DeepSeekRolePack(
@@ -339,6 +512,18 @@ struct DeepSeekRolePack: Codable, Equatable {
             primaryColor: "#EA580C",
             secondaryColor: "#0284C7",
             customBaseSprite: nil
+        ),
+        DeepSeekRolePack(
+            id: "pack-appkit-glyph",
+            name: "AppKit 极简线条",
+            author: "macOS HIG",
+            version: "1.0.0",
+            deepseekModel: "deepseek-flash",
+            roleDescription: "纯净几何线条，零视觉负担",
+            archetype: .glyph,
+            primaryColor: "#1E293B",
+            secondaryColor: "#0EA5E9",
+            customBaseSprite: nil
         )
     ]
 }
@@ -351,6 +536,7 @@ struct SubTaskItem: Equatable {
     let title: String
     let roleLabel: String
     let directory: String
+    let apiKeyBucket: String
     var state: AgentRunState
     var stateEnteredAtMs: Int64
     var completedDurationSec: Int64?
@@ -379,6 +565,7 @@ struct MasterSessionItem: Equatable {
     let title: String
     let modelName: String
     let directory: String
+    let apiKeyBucket: String
     var state: AgentRunState
     var stateEnteredAtMs: Int64
     var completedDurationSec: Int64?
@@ -404,12 +591,6 @@ struct MasterSessionItem: Equatable {
     }
 }
 
-enum ChartMetricKind: Int {
-    case requests = 0
-    case costCny  = 1
-    case cacheHit = 2
-}
-
 /// 今日 24 小时分时使用趋势点（由单次今日 message 查询在内存聚合，零额外 SQL 开销）
 struct TodayHourlyPoint: Equatable {
     let hour: Int                  // 0...23
@@ -422,9 +603,10 @@ struct TodayHourlyPoint: Equatable {
 }
 
 struct QuotaSnapshot: Equatable {
-    var apiTotalBalance: Double?      // 若配置了 DEEPSEEK_API_KEY，返回官方实时余额数值
+    var apiTotalBalance: Double?      // 若配置了或自动提取到 sk-...，返回官方实时余额数值
     var apiCurrency: String           // "CNY" 或 "USD"
-    var walletBreakdownLabel: String  // 如 "Paid ¥18.50" 或 "Paid"
+    var walletBreakdownLabel: String  // 如 "Paid ¥2785.36" 或 "Paid"
+    var balanceSourceLabel: String = "" // 如 "api.deepseek.com · DeepSeek 官方 (sk-***xx)"
     var usdToCnyRate: Double          // 线上实时 USD/CNY 汇率
     var fxSourceLabel: String         // 如 "实时汇率" / "缓存汇率"
     var resetTimeLabel: String
@@ -449,16 +631,21 @@ enum TimeFormatters {
         if sec < 3600 {
             let m = sec / 60
             let s = sec % 60
-            return String(format: "%dm %02ds", m, s)
+            return String(format: "%dm%02ds", m, s)
         }
         let h = sec / 3600
         let m = (sec % 3600) / 60
-        return String(format: "%dh %02dm", h, m)
+        return String(format: "%dh%02dm", h, m)
     }
 
     static func liveStateTimerLabel(state: AgentRunState, enteredAtMs: Int64, nowMs: Int64) -> String {
         let elapsedSec = max(0, (nowMs - enteredAtMs) / 1000)
         return "\(state.livePrefix) \(formatCompactSeconds(elapsedSec))"
+    }
+
+    static func compactTimerOnly(enteredAtMs: Int64, nowMs: Int64) -> String {
+        let elapsedSec = max(0, (nowMs - enteredAtMs) / 1000)
+        return formatCompactSeconds(elapsedSec)
     }
 
     static func currentHHMM() -> String {

@@ -87,7 +87,7 @@ echo "==> [5/6] 执行本地 Ad-Hoc 代码签名..."
 xattr -cr "$APP_BUNDLE" || true
 codesign --force --deep --sign - "$APP_BUNDLE"
 
-echo "==> [6/6] 制作拖拽安装镜像 ${DMG_NAME}..."
+echo "==> [6/6] 制作拖拽安装镜像 ${DMG_NAME} 并同步驻留 /Applications..."
 ln -s /Applications "${STAGING_DIR}/Applications"
 rm -f "$OUTPUT_DMG"
 hdiutil create \
@@ -97,15 +97,32 @@ hdiutil create \
   -format UDZO \
   "$OUTPUT_DMG" >/dev/null
 
+INSTALLED_APP="/Applications/${APP_NAME}.app"
+if [[ -w "/Applications" ]]; then
+  osascript -e 'tell application id "app.agentspur.macos" to quit' >/dev/null 2>&1 || true
+  pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+  sleep 0.35
+  rm -rf "$INSTALLED_APP"
+  ditto "$APP_BUNDLE" "$INSTALLED_APP"
+  xattr -cr "$INSTALLED_APP" || true
+fi
+
 rm -rf "$BUILD_WORK_DIR"
 
 echo ""
 echo "========================================================"
-echo " 打包成功！"
-echo " DMG 路径: ${OUTPUT_DMG}"
-echo " 双击打开 ${DMG_NAME}，将 AgentSpur 拖入 Applications 即可使用。"
+echo " 打包与独立后台驻留完成！"
+echo " DMG 镜像路径: ${OUTPUT_DMG}"
+if [[ -d "$INSTALLED_APP" ]]; then
+  echo " 已自动安装至: ${INSTALLED_APP}"
+  echo " 正在通过 macOS LaunchServices 独立拉起菜单栏常驻进程（完全脱离当前终端会话）..."
+  open -a "$INSTALLED_APP" || true
+else
+  echo " 双击打开 ${DMG_NAME}，将 AgentSpur 拖入 Applications 即可全局常驻。"
+  if command -v open >/dev/null 2>&1; then
+    open -R "$OUTPUT_DMG" || true
+  fi
+fi
+echo " 提示：若菜单栏右侧图标过多被刘海屏遮挡，可按住 ⌘ 键将小鲸鱼图标向右拖到控制中心旁，macOS 永不折叠。"
 echo "========================================================"
 
-if command -v open >/dev/null 2>&1; then
-  open -R "$OUTPUT_DMG" || true
-fi

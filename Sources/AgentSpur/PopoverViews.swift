@@ -3,9 +3,403 @@ import Foundation
 import QuartzCore
 import UniformTypeIdentifiers
 
-// MARK: - Cache Hit Visual Progress Track (CoreGraphics · Zero WebView)
+// MARK: - Native macOS Narrow-Border Capsule Button (Uniform 28pt Height · 1:1 Design Parity)
 
-private final class CacheProgressTrackView: NSView {
+private final class CapsuleControlButton: NSView {
+    var onPress: (() -> Void)?
+
+    private let titleField = NSTextField(labelWithString: "")
+    private let symbolView = NSImageView()
+    private var isHovered = false
+    private var trackingRef: NSTrackingArea?
+    private let fixedWidth: CGFloat?
+    private let usesSymbol: Bool
+
+    var isTintedAccent: Bool = false {
+        didSet { updateVisualStyle() }
+    }
+
+    var text: String {
+        get { titleField.stringValue }
+        set {
+            titleField.stringValue = newValue
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    init(
+        title: String,
+        symbolName: String? = nil,
+        fixedWidth: CGFloat? = nil,
+        fontSize: CGFloat = 11.2,
+        monospaced: Bool = false
+    ) {
+        self.fixedWidth = fixedWidth
+        self.usesSymbol = (symbolName != nil)
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 14
+        layer?.borderWidth = 1.0
+
+        var constraints: [NSLayoutConstraint] = [
+            heightAnchor.constraint(equalToConstant: 28)
+        ]
+
+        if let sym = symbolName,
+           let img = NSImage(systemSymbolName: sym, accessibilityDescription: title)?
+               .withSymbolConfiguration(.init(pointSize: 12.5, weight: .medium)) {
+            symbolView.image = img
+            symbolView.imageScaling = .scaleProportionallyDown
+            symbolView.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(symbolView)
+            constraints.append(contentsOf: [
+                symbolView.centerXAnchor.constraint(equalTo: centerXAnchor),
+                symbolView.centerYAnchor.constraint(equalTo: centerYAnchor),
+                symbolView.widthAnchor.constraint(equalToConstant: 15),
+                symbolView.heightAnchor.constraint(equalToConstant: 15)
+            ])
+        } else {
+            titleField.stringValue = title
+            titleField.font = monospaced
+                ? NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .medium)
+                : NSFont.systemFont(ofSize: fontSize, weight: .medium)
+            titleField.alignment = .center
+            titleField.lineBreakMode = .byTruncatingTail
+            titleField.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(titleField)
+
+            let hPad: CGFloat = fixedWidth != nil ? 4 : 10.5
+            constraints.append(contentsOf: [
+                titleField.centerYAnchor.constraint(equalTo: centerYAnchor),
+                titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: hPad),
+                titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -hPad)
+            ])
+        }
+
+        if let fw = fixedWidth {
+            constraints.append(widthAnchor.constraint(equalToConstant: fw))
+        }
+        NSLayoutConstraint.activate(constraints)
+
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        updateVisualStyle()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = trackingRef { removeTrackingArea(t) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingRef = area
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, alphaValue > 0.01 else { return nil }
+        return super.hitTest(point) != nil ? self : nil
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateVisualStyle()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateVisualStyle()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        layer?.backgroundColor = NSColor(srgbRed: 0.90, green: 0.94, blue: 0.98, alpha: 1.0).cgColor
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let pt = convert(event.locationInWindow, from: nil)
+        updateVisualStyle()
+        if bounds.insetBy(dx: -4, dy: -4).contains(pt) {
+            let handler = onPress
+            DispatchQueue.main.async {
+                handler?()
+            }
+        }
+    }
+
+    private func updateVisualStyle() {
+        if isTintedAccent {
+            layer?.backgroundColor = isHovered
+                ? NSColor(srgbRed: 0.88, green: 0.95, blue: 1.00, alpha: 1.0).cgColor
+                : NSColor(srgbRed: 0.93, green: 0.97, blue: 1.00, alpha: 1.0).cgColor
+            layer?.borderColor = NSColor(srgbRed: 0.68, green: 0.87, blue: 0.98, alpha: 1.0).cgColor
+            let fg = NSColor(srgbRed: 0.01, green: 0.43, blue: 0.66, alpha: 1.0)
+            titleField.textColor = fg
+            if usesSymbol { symbolView.contentTintColor = fg }
+        } else {
+            layer?.backgroundColor = isHovered
+                ? NSColor(srgbRed: 0.96, green: 0.975, blue: 0.99, alpha: 1.0).cgColor
+                : NSColor.white.cgColor
+            layer?.borderColor = isHovered
+                ? NSColor(srgbRed: 0.74, green: 0.81, blue: 0.89, alpha: 1.0).cgColor
+                : NSColor(srgbRed: 0.85, green: 0.89, blue: 0.94, alpha: 1.0).cgColor
+            let fg = NSColor(srgbRed: 0.16, green: 0.23, blue: 0.33, alpha: 1.0)
+            titleField.textColor = fg
+            if usesSymbol { symbolView.contentTintColor = fg }
+        }
+    }
+}
+
+// MARK: - Optically Aligned 28pt Running Status Capsule (e.g. "● 正在工作 33s")
+
+private final class RunningStatusCapsuleView: NSView {
+    private let dotView = NSView()
+    private let textLabel = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 14
+        layer?.borderWidth = 1.0
+
+        dotView.wantsLayer = true
+        dotView.layer?.cornerRadius = 3.25
+        dotView.translatesAutoresizingMaskIntoConstraints = false
+
+        textLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .semibold)
+        textLabel.lineBreakMode = .byClipping
+        textLabel.setContentHuggingPriority(.required, for: .horizontal)
+        textLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        textLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(dotView)
+        addSubview(textLabel)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 28),
+            dotView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9.5),
+            dotView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dotView.widthAnchor.constraint(equalToConstant: 6.5),
+            dotView.heightAnchor.constraint(equalToConstant: 6.5),
+            textLabel.leadingAnchor.constraint(equalTo: dotView.trailingAnchor, constant: 5.5),
+            textLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            textLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(state: AgentRunState, enteredAtMs: Int64, nowMs: Int64) {
+        layer?.backgroundColor = state.pillBackgroundColor.cgColor
+        layer?.borderColor = state.pillBorderColor.cgColor
+        dotView.layer?.backgroundColor = state.accentColor.cgColor
+        textLabel.textColor = state.accentColor
+
+        if state == .completed {
+            textLabel.stringValue = "空闲待命"
+        } else {
+            textLabel.stringValue = TimeFormatters.liveStateTimerLabel(
+                state: state,
+                enteredAtMs: enteredAtMs,
+                nowMs: nowMs
+            )
+        }
+    }
+}
+
+// MARK: - Full-Width 4-Column Segmented Filter Bar
+
+private final class SegmentTabButton: NSView {
+    var onSelect: (() -> Void)?
+
+    private let labelField = NSTextField(labelWithString: "")
+    private var isHovered = false
+    private var trackingRef: NSTrackingArea?
+
+    var isSelectedSegment: Bool = false {
+        didSet { updateAppearance() }
+    }
+
+    var titleText: String {
+        get { labelField.stringValue }
+        set { labelField.stringValue = newValue }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 6.5
+
+        labelField.alignment = .center
+        labelField.lineBreakMode = .byClipping
+        labelField.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(labelField)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 24),
+            labelField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            labelField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            labelField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2)
+        ])
+        updateAppearance()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = trackingRef { removeTrackingArea(t) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingRef = area
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, alphaValue > 0.01 else { return nil }
+        return super.hitTest(point) != nil ? self : nil
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateAppearance()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateAppearance()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if !isSelectedSegment {
+            layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.72).cgColor
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let pt = convert(event.locationInWindow, from: nil)
+        updateAppearance()
+        if bounds.insetBy(dx: -3, dy: -3).contains(pt) {
+            let handler = onSelect
+            DispatchQueue.main.async {
+                handler?()
+            }
+        }
+    }
+
+    private func updateAppearance() {
+        if isSelectedSegment {
+            layer?.backgroundColor = NSColor.white.cgColor
+            layer?.shadowColor = NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0).cgColor
+            layer?.shadowOpacity = 0.07
+            layer?.shadowRadius = 2.0
+            layer?.shadowOffset = CGSize(width: 0, height: -1)
+            labelField.font = NSFont.monospacedDigitSystemFont(ofSize: 11.2, weight: .semibold)
+            labelField.textColor = NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0)
+        } else {
+            layer?.backgroundColor = isHovered
+                ? NSColor(white: 1.0, alpha: 0.45).cgColor
+                : NSColor.clear.cgColor
+            layer?.shadowOpacity = 0.0
+            labelField.font = NSFont.monospacedDigitSystemFont(ofSize: 11.2, weight: .medium)
+            labelField.textColor = isHovered
+                ? NSColor(srgbRed: 0.12, green: 0.18, blue: 0.28, alpha: 1.0)
+                : NSColor(srgbRed: 0.36, green: 0.43, blue: 0.53, alpha: 1.0)
+        }
+    }
+}
+
+private final class SegmentedFilterBarView: NSView {
+    var onSelectIndex: ((Int) -> Void)?
+
+    private var tabs: [SegmentTabButton] = []
+
+    var selectedIndex: Int = 0 {
+        didSet {
+            for (idx, tab) in tabs.enumerated() {
+                tab.isSelectedSegment = (idx == selectedIndex)
+            }
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 8.5
+        layer?.backgroundColor = NSColor(srgbRed: 0.892, green: 0.918, blue: 0.952, alpha: 0.90).cgColor
+
+        let initialTitles = ["全部 0", "待处理 0", "运行中 0", "已完成 0"]
+        for (idx, title) in initialTitles.enumerated() {
+            let btn = SegmentTabButton(frame: .zero)
+            btn.translatesAutoresizingMaskIntoConstraints = false
+            btn.titleText = title
+            btn.isSelectedSegment = (idx == 0)
+            let captured = idx
+            btn.onSelect = { [weak self] in
+                guard let self else { return }
+                self.selectedIndex = captured
+                self.onSelectIndex?(captured)
+            }
+            addSubview(btn)
+            tabs.append(btn)
+        }
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 30),
+            tabs[0].leadingAnchor.constraint(equalTo: leadingAnchor, constant: 3),
+            tabs[0].centerYAnchor.constraint(equalTo: centerYAnchor),
+            tabs[1].leadingAnchor.constraint(equalTo: tabs[0].trailingAnchor, constant: 4),
+            tabs[1].centerYAnchor.constraint(equalTo: centerYAnchor),
+            tabs[1].widthAnchor.constraint(equalTo: tabs[0].widthAnchor),
+            tabs[2].leadingAnchor.constraint(equalTo: tabs[1].trailingAnchor, constant: 4),
+            tabs[2].centerYAnchor.constraint(equalTo: centerYAnchor),
+            tabs[2].widthAnchor.constraint(equalTo: tabs[0].widthAnchor),
+            tabs[3].leadingAnchor.constraint(equalTo: tabs[2].trailingAnchor, constant: 4),
+            tabs[3].trailingAnchor.constraint(equalTo: trailingAnchor, constant: -3),
+            tabs[3].centerYAnchor.constraint(equalTo: centerYAnchor),
+            tabs[3].widthAnchor.constraint(equalTo: tabs[0].widthAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func updateLabels(_ labels: [String]) {
+        for (idx, text) in labels.prefix(tabs.count).enumerated() {
+            tabs[idx].titleText = text
+        }
+    }
+}
+
+// MARK: - Dual-Tone Cache Hit Progress Bar (Sky Blue Hit vs Neutral Grey Miss)
+
+private final class DualToneCacheTrackView: NSView {
     var hitRatio: Double = 0.0 {
         didSet {
             let clamped = max(0.0, min(1.0, hitRatio))
@@ -34,10 +428,7 @@ private final class CacheProgressTrackView: NSView {
         ctx.addPath(trackPath)
         ctx.clip()
 
-        let missColor = hasTraffic
-            ? NSColor(srgbRed: 0.96, green: 0.84, blue: 0.66, alpha: 0.72).cgColor
-            : NSColor(srgbRed: 0.89, green: 0.92, blue: 0.96, alpha: 1.0).cgColor
-        ctx.setFillColor(missColor)
+        ctx.setFillColor(NSColor(srgbRed: 0.89, green: 0.92, blue: 0.96, alpha: 1.0).cgColor)
         ctx.fill(b)
 
         if hasTraffic && hitRatio > 0.0 {
@@ -51,7 +442,7 @@ private final class CacheProgressTrackView: NSView {
             let cs = CGColorSpaceCreateDeviceRGB()
             let colors = [
                 NSColor(srgbRed: 0.01, green: 0.52, blue: 0.78, alpha: 1.0).cgColor,
-                NSColor(srgbRed: 0.04, green: 0.66, blue: 0.50, alpha: 1.0).cgColor
+                NSColor(srgbRed: 0.14, green: 0.70, blue: 0.95, alpha: 1.0).cgColor
             ] as CFArray
             if let grad = CGGradient(colorsSpace: cs, colors: colors, locations: [0.0, 1.0]) {
                 ctx.drawLinearGradient(
@@ -68,531 +459,517 @@ private final class CacheProgressTrackView: NSView {
     }
 }
 
-// MARK: - Structured 2x2 Metric Sub-Tile View
+// MARK: - Symmetrically Centered Custom Dark Floating Breakdown Hover Card
 
-private final class MetricTileView: NSView {
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let badgeLabel = NSTextField(labelWithString: "")
-    private let primaryValueLabel = NSTextField(labelWithString: "")
-    private let subDetailLabel = NSTextField(labelWithString: "")
+private final class BreakdownKeyValueRowView: NSView {
+    private let keyField = NSTextField(labelWithString: "")
+    private let valField = NSTextField(labelWithString: "")
+
+    init(key: String, value: String, valueColor: NSColor) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        keyField.stringValue = key
+        keyField.font = NSFont.systemFont(ofSize: 10.8, weight: .regular)
+        keyField.textColor = NSColor(srgbRed: 0.62, green: 0.69, blue: 0.79, alpha: 1.0)
+        keyField.setContentHuggingPriority(.required, for: .horizontal)
+        keyField.setContentCompressionResistancePriority(.required, for: .horizontal)
+        keyField.translatesAutoresizingMaskIntoConstraints = false
+
+        valField.stringValue = value
+        valField.font = NSFont.monospacedDigitSystemFont(ofSize: 10.8, weight: .medium)
+        valField.textColor = valueColor
+        valField.alignment = .right
+        valField.lineBreakMode = .byTruncatingMiddle
+        valField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        valField.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(keyField)
+        addSubview(valField)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 17.5),
+            keyField.leadingAnchor.constraint(equalTo: leadingAnchor),
+            keyField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            valField.trailingAnchor.constraint(equalTo: trailingAnchor),
+            valField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            valField.leadingAnchor.constraint(greaterThanOrEqualTo: keyField.trailingAnchor, constant: 10)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+private final class CostBreakdownHoverCardView: NSView {
+    private let headerTitleLabel = NSTextField(labelWithString: "")
+    private let headerRightLabel = NSTextField(labelWithString: "")
+    private let rowsContainer = NSView()
+    private var rowConstraints: [NSLayoutConstraint] = []
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.cornerRadius = 8
-        layer?.backgroundColor = NSColor(srgbRed: 0.966, green: 0.979, blue: 0.994, alpha: 1.0).cgColor
+        layer?.cornerRadius = 12
+        layer?.backgroundColor = NSColor(srgbRed: 0.059, green: 0.090, blue: 0.165, alpha: 0.97).cgColor
         layer?.borderWidth = 1.0
-        layer?.borderColor = NSColor(srgbRed: 0.85, green: 0.90, blue: 0.96, alpha: 1.0).cgColor
+        layer?.borderColor = NSColor(srgbRed: 0.22, green: 0.30, blue: 0.42, alpha: 0.85).cgColor
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = 0.26
+        layer?.shadowRadius = 15
+        layer?.shadowOffset = CGSize(width: 0, height: -6)
 
-        titleLabel.font = NSFont.systemFont(ofSize: 10.0, weight: .semibold)
-        titleLabel.textColor = NSColor(srgbRed: 0.30, green: 0.38, blue: 0.48, alpha: 1.0)
-        titleLabel.lineBreakMode = .byTruncatingTail
+        headerTitleLabel.font = NSFont.systemFont(ofSize: 11.4, weight: .semibold)
+        headerTitleLabel.textColor = NSColor(srgbRed: 0.49, green: 0.83, blue: 0.99, alpha: 1.0)
+        headerTitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        badgeLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .semibold)
-        badgeLabel.textColor = NSColor(srgbRed: 0.02, green: 0.45, blue: 0.68, alpha: 1.0)
-        badgeLabel.alignment = .right
-        badgeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        headerRightLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.4, weight: .medium)
+        headerRightLabel.textColor = NSColor(srgbRed: 0.60, green: 0.67, blue: 0.77, alpha: 1.0)
+        headerRightLabel.alignment = .right
+        headerRightLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13.0, weight: .semibold)
-        primaryValueLabel.textColor = NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0)
-        primaryValueLabel.lineBreakMode = .byTruncatingTail
+        let divider = NSView()
+        divider.wantsLayer = true
+        divider.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.10).cgColor
+        divider.translatesAutoresizingMaskIntoConstraints = false
 
-        subDetailLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 9.8, weight: .regular)
-        subDetailLabel.textColor = NSColor(srgbRed: 0.34, green: 0.42, blue: 0.52, alpha: 1.0)
-        subDetailLabel.lineBreakMode = .byTruncatingTail
+        rowsContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        let topRow = NSStackView(views: [titleLabel, NSView(), badgeLabel])
-        topRow.orientation = .horizontal
-        topRow.alignment = .centerY
-        topRow.spacing = 4
-
-        let vStack = NSStackView(views: [topRow, primaryValueLabel, subDetailLabel])
-        vStack.orientation = .vertical
-        vStack.alignment = .width
-        vStack.spacing = 2
-        vStack.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
-        vStack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(vStack)
+        addSubview(headerTitleLabel)
+        addSubview(headerRightLabel)
+        addSubview(divider)
+        addSubview(rowsContainer)
 
         NSLayoutConstraint.activate([
-            vStack.topAnchor.constraint(equalTo: topAnchor),
-            vStack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            vStack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            vStack.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
+            headerTitleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            headerTitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 15),
+            headerRightLabel.centerYAnchor.constraint(equalTo: headerTitleLabel.centerYAnchor),
+            headerRightLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -15),
+            headerRightLabel.leadingAnchor.constraint(greaterThanOrEqualTo: headerTitleLabel.trailingAnchor, constant: 8),
 
-        setContentHuggingPriority(.required, for: .vertical)
-        setContentCompressionResistancePriority(.required, for: .vertical)
+            divider.topAnchor.constraint(equalTo: headerTitleLabel.bottomAnchor, constant: 7.5),
+            divider.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 15),
+            divider.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -15),
+            divider.heightAnchor.constraint(equalToConstant: 1),
+
+            rowsContainer.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 7.5),
+            rowsContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 15),
+            rowsContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -15),
+            rowsContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
+        ])
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func update(title: String, badge: String, primary: String, sub: String, badgeColor: NSColor? = nil) {
-        titleLabel.stringValue = title
-        badgeLabel.stringValue = badge
-        if let badgeColor {
-            badgeLabel.textColor = badgeColor
+    private func setRows(_ rows: [BreakdownKeyValueRowView]) {
+        NSLayoutConstraint.deactivate(rowConstraints)
+        rowConstraints.removeAll()
+        for v in rowsContainer.subviews {
+            v.removeFromSuperview()
         }
-        primaryValueLabel.stringValue = primary
-        subDetailLabel.stringValue = sub
+        var prev: NSView? = nil
+        for (idx, row) in rows.enumerated() {
+            rowsContainer.addSubview(row)
+            rowConstraints.append(row.leadingAnchor.constraint(equalTo: rowsContainer.leadingAnchor))
+            rowConstraints.append(row.trailingAnchor.constraint(equalTo: rowsContainer.trailingAnchor))
+            if let p = prev {
+                rowConstraints.append(row.topAnchor.constraint(equalTo: p.bottomAnchor, constant: 4.5))
+            } else {
+                rowConstraints.append(row.topAnchor.constraint(equalTo: rowsContainer.topAnchor))
+            }
+            if idx == rows.count - 1 {
+                rowConstraints.append(row.bottomAnchor.constraint(equalTo: rowsContainer.bottomAnchor))
+            }
+            prev = row
+        }
+        NSLayoutConstraint.activate(rowConstraints)
+    }
+
+    func configure(
+        billing: BillingTelemetrySummary,
+        csvReconciliation: OfficialCSVReconciliation?,
+        quota: QuotaSnapshot
+    ) {
+        let safeRate = max(1.0, quota.usdToCnyRate)
+        let whiteVal = NSColor(srgbRed: 0.95, green: 0.97, blue: 0.99, alpha: 1.0)
+        let emeraldVal = NSColor(srgbRed: 0.32, green: 0.86, blue: 0.64, alpha: 1.0)
+        let skyVal = NSColor(srgbRed: 0.49, green: 0.83, blue: 0.99, alpha: 1.0)
+        let mutedVal = NSColor(srgbRed: 0.64, green: 0.71, blue: 0.80, alpha: 1.0)
+
+        if let csv = csvReconciliation {
+            headerTitleLabel.stringValue = "官方 CSV 账单对账明细"
+            headerRightLabel.stringValue = "\(csv.modelName) · $1 = ¥\(String(format: "%.4f", safeRate))"
+
+            let hitPct = csv.cacheHitRatePercent
+            setRows([
+                BreakdownKeyValueRowView(
+                    key: "缓存命中 (Hit)",
+                    value: "\(TimeFormatters.formatTokenCount(csv.inputCacheHitTokens)) (\(String(format: "%.1f%%", hitPct))) · 已省 ¥\(String(format: "%.2f", csv.estimatedCacheSavedCny))",
+                    valueColor: emeraldVal
+                ),
+                BreakdownKeyValueRowView(
+                    key: "未命中输入 (Miss)",
+                    value: TimeFormatters.formatTokenCount(csv.inputCacheMissTokens),
+                    valueColor: whiteVal
+                ),
+                BreakdownKeyValueRowView(
+                    key: "输出 + 思维链",
+                    value: TimeFormatters.formatTokenCount(csv.outputTokens),
+                    valueColor: whiteVal
+                ),
+                BreakdownKeyValueRowView(
+                    key: "对比本地库精算",
+                    value: String(format: "¥%.4f · 钱包 %@ (%@)", billing.spurCostCny, csv.walletType, csv.currency),
+                    valueColor: mutedVal
+                )
+            ])
+            return
+        }
+
+        let shortModel = billing.dominantModelSpec.components(separatedBy: " · ").first ?? "V4.1-Flash"
+        headerTitleLabel.stringValue = "\(billing.dateLabel) 精算透视明细"
+        headerRightLabel.stringValue = "\(shortModel) · $1 = ¥\(String(format: "%.4f", safeRate))"
+
+        let hitPct = billing.cacheHitRatePercent
+        var rows: [BreakdownKeyValueRowView] = [
+            BreakdownKeyValueRowView(
+                key: "缓存命中 (Hit)",
+                value: String(
+                    format: "%@ (%.1f%%) · 实付 ¥%.2f · 已省 ¥%.2f",
+                    TimeFormatters.formatTokenCount(billing.inputCacheHitTokens),
+                    hitPct,
+                    billing.cacheHitCostCny,
+                    billing.cacheSavedCny
+                ),
+                valueColor: emeraldVal
+            ),
+            BreakdownKeyValueRowView(
+                key: "未命中输入 (Miss)",
+                value: String(
+                    format: "%@ (%.1f%%) · 实付 ¥%.2f",
+                    TimeFormatters.formatTokenCount(billing.inputCacheMissTokens),
+                    billing.cacheMissRatePercent,
+                    billing.cacheMissCostCny
+                ),
+                valueColor: whiteVal
+            ),
+            BreakdownKeyValueRowView(
+                key: "输出 + 思维链",
+                value: String(
+                    format: "%@ (思维链 %@) · 实付 ¥%.2f",
+                    TimeFormatters.formatTokenCount(billing.outputTokens),
+                    TimeFormatters.formatTokenCount(billing.reasoningTokens),
+                    billing.outputCostCny
+                ),
+                valueColor: whiteVal
+            ),
+            BreakdownKeyValueRowView(
+                key: "忙闲时段拆分",
+                value: String(
+                    format: "忙时 ¥%.2f (%d次) · 闲时5折 ¥%.2f (%d次)",
+                    billing.peakCostCny,
+                    billing.peakRequestCount,
+                    billing.offPeakCostCny,
+                    billing.offPeakRequestCount
+                ),
+                valueColor: whiteVal
+            ),
+            BreakdownKeyValueRowView(
+                key: "OpenCode 静态估",
+                value: String(format: "$%.4f (未计忙闲时差异)", billing.opencodeRawUsd),
+                valueColor: mutedVal
+            )
+        ]
+
+        if let bal = quota.apiTotalBalance {
+            let balSymbol = quota.apiCurrency == "USD" ? "$" : "¥"
+            let src = quota.balanceSourceLabel.isEmpty ? "官方实时接口" : quota.balanceSourceLabel
+            rows.append(BreakdownKeyValueRowView(
+                key: "官方实时余额",
+                value: String(format: "%@%.2f · %@", balSymbol, bal, src),
+                valueColor: skyVal
+            ))
+        }
+        setRows(rows)
     }
 }
 
-// MARK: - Subtle Tinted Tag View (6pt Rounded)
-
-private final class SoftTagBadgeView: NSView {
-    private let label = NSTextField(labelWithString: "")
-
-    init(bgColor: NSColor, borderColor: NSColor, textColor: NSColor) {
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.cornerRadius = 6
-        layer?.backgroundColor = bgColor.cgColor
-        layer?.borderWidth = 1.0
-        layer?.borderColor = borderColor.cgColor
-
-        label.font = NSFont.monospacedDigitSystemFont(ofSize: 9.8, weight: .semibold)
-        label.textColor = textColor
-        label.lineBreakMode = .byTruncatingTail
-        label.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(label)
-
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 2.0),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2.0),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6.0),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6.0)
-        ])
-
-        setContentHuggingPriority(.required, for: .horizontal)
-        setContentCompressionResistancePriority(.required, for: .horizontal)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func applyColors(bg: NSColor, border: NSColor, text: NSColor) {
-        layer?.backgroundColor = bg.cgColor
-        layer?.borderColor = border.cgColor
-        label.textColor = text
-    }
-
-    var text: String {
-        get { label.stringValue }
-        set { label.stringValue = newValue }
-    }
-}
-
-// MARK: - Today Official CSV & Cache Efficiency Telemetry Card View
+// MARK: - Minimalist Cost & Cache Overview Card (Symmetrical Pure Auto Layout)
 
 final class BillingTelemetryCardView: NSView {
-    private let eyebrowLabel = NSTextField(labelWithString: "")
-    private let heroPrimaryCostLabel = NSTextField(labelWithString: "")
-    private let heroSecondaryCostLabel = NSTextField(labelWithString: "")
-    private let heroPeriodSplitLabel = NSTextField(labelWithString: "")
+    var onExitCSVMode: (() -> Void)?
+    var onHoverStateChange: ((Bool) -> Void)?
+    var onClickBalanceArea: (() -> Void)?
 
-    private let savingsTag = SoftTagBadgeView(
-        bgColor: NSColor(srgbRed: 0.925, green: 0.992, blue: 0.960, alpha: 1.0),
-        borderColor: NSColor(srgbRed: 0.65, green: 0.93, blue: 0.81, alpha: 1.0),
-        textColor: NSColor(srgbRed: 0.02, green: 0.47, blue: 0.34, alpha: 1.0)
-    )
-    private let windowModelTag = SoftTagBadgeView(
-        bgColor: NSColor(srgbRed: 0.94, green: 0.976, blue: 1.0, alpha: 1.0),
-        borderColor: NSColor(srgbRed: 0.73, green: 0.90, blue: 0.99, alpha: 1.0),
-        textColor: NSColor(srgbRed: 0.01, green: 0.41, blue: 0.63, alpha: 1.0)
-    )
+    private let captionLabel = NSTextField(labelWithString: "今日总开销")
+    private let exitCSVChip = CapsuleControlButton(title: "退出对账", fontSize: 10.0)
+    private let rightWindowLabel = NSTextField(labelWithString: "")
 
-    private let cacheBarLeftLabel = NSTextField(labelWithString: "")
-    private let cacheBarRightLabel = NSTextField(labelWithString: "")
-    private let cacheProgressTrack = CacheProgressTrackView()
+    private let heroAmountLabel = NSTextField(labelWithString: "¥0.00")
+    private let heroSubCurrencyLabel = NSTextField(labelWithString: "≈ $0.00")
+    private let savingsInlineLabel = NSTextField(labelWithString: "")
 
-    private let hitTile = MetricTileView()
-    private let missTile = MetricTileView()
-    private let outTile = MetricTileView()
-    private let reqTile = MetricTileView()
-
-    private let footerLeftLabel = NSTextField(labelWithString: "")
-    private let footerRightLabel = NSTextField(labelWithString: "")
+    private let cacheRateLabel = NSTextField(labelWithString: "Cache 命中率 0.0%")
+    private let requestMetaLabel = NSTextField(labelWithString: "")
+    private let cacheTrack = DualToneCacheTrackView()
+    private var trackingRef: NSTrackingArea?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.cornerRadius = 11
-        layer?.backgroundColor = NSColor(srgbRed: 1.0, green: 1.0, blue: 1.0, alpha: 0.98).cgColor
+        layer?.cornerRadius = 12
+        layer?.backgroundColor = NSColor.white.cgColor
         layer?.borderWidth = 1.0
-        layer?.borderColor = NSColor(srgbRed: 0.82, green: 0.88, blue: 0.95, alpha: 1.0).cgColor
+        layer?.borderColor = NSColor(srgbRed: 0.87, green: 0.91, blue: 0.95, alpha: 1.0).cgColor
 
-        setContentHuggingPriority(.required, for: .vertical)
-        setContentCompressionResistancePriority(.required, for: .vertical)
+        captionLabel.font = NSFont.systemFont(ofSize: 11.2, weight: .medium)
+        captionLabel.textColor = NSColor(srgbRed: 0.39, green: 0.45, blue: 0.55, alpha: 1.0)
+        captionLabel.lineBreakMode = .byTruncatingTail
+        captionLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        // 1. Hero Spend, Peak/Off-Peak Split & Savings Tags
-        eyebrowLabel.font = NSFont.systemFont(ofSize: 10.2, weight: .medium)
-        eyebrowLabel.textColor = NSColor(srgbRed: 0.35, green: 0.42, blue: 0.52, alpha: 1.0)
-        eyebrowLabel.lineBreakMode = .byTruncatingTail
+        exitCSVChip.isHidden = true
+        exitCSVChip.translatesAutoresizingMaskIntoConstraints = false
+        exitCSVChip.onPress = { [weak self] in
+            self?.onExitCSVMode?()
+        }
 
-        heroPrimaryCostLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 19.0, weight: .bold)
-        heroPrimaryCostLabel.textColor = NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0)
+        rightWindowLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.6, weight: .medium)
+        rightWindowLabel.textColor = NSColor(srgbRed: 0.45, green: 0.52, blue: 0.62, alpha: 1.0)
+        rightWindowLabel.alignment = .right
+        rightWindowLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        rightWindowLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        heroSecondaryCostLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
-        heroSecondaryCostLabel.textColor = NSColor(srgbRed: 0.36, green: 0.44, blue: 0.54, alpha: 1.0)
+        heroAmountLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 26.0, weight: .bold)
+        heroAmountLabel.textColor = NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0)
+        heroAmountLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        heroPeriodSplitLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 9.8, weight: .medium)
-        heroPeriodSplitLabel.textColor = NSColor(srgbRed: 0.26, green: 0.35, blue: 0.46, alpha: 1.0)
-        heroPeriodSplitLabel.lineBreakMode = .byTruncatingTail
+        heroSubCurrencyLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .medium)
+        heroSubCurrencyLabel.textColor = NSColor(srgbRed: 0.52, green: 0.59, blue: 0.68, alpha: 1.0)
+        heroSubCurrencyLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let heroAmountRow = NSStackView(views: [heroPrimaryCostLabel, heroSecondaryCostLabel])
-        heroAmountRow.orientation = .horizontal
-        heroAmountRow.alignment = .lastBaseline
-        heroAmountRow.spacing = 6
+        savingsInlineLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.2, weight: .semibold)
+        savingsInlineLabel.textColor = NSColor(srgbRed: 0.04, green: 0.58, blue: 0.40, alpha: 1.0)
+        savingsInlineLabel.alignment = .right
+        savingsInlineLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let heroLeftStack = NSStackView(views: [eyebrowLabel, heroAmountRow, heroPeriodSplitLabel])
-        heroLeftStack.orientation = .vertical
-        heroLeftStack.alignment = .leading
-        heroLeftStack.spacing = 1.5
-        heroLeftStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        cacheRateLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .semibold)
+        cacheRateLabel.textColor = NSColor(srgbRed: 0.02, green: 0.46, blue: 0.70, alpha: 1.0)
+        cacheRateLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let heroRightStack = NSStackView(views: [savingsTag, windowModelTag])
-        heroRightStack.orientation = .vertical
-        heroRightStack.alignment = .trailing
-        heroRightStack.spacing = 4
+        requestMetaLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.6, weight: .regular)
+        requestMetaLabel.textColor = NSColor(srgbRed: 0.54, green: 0.61, blue: 0.70, alpha: 1.0)
+        requestMetaLabel.alignment = .right
+        requestMetaLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let heroRow = NSStackView(views: [heroLeftStack, NSView(), heroRightStack])
-        heroRow.orientation = .horizontal
-        heroRow.alignment = .centerY
-        heroRow.spacing = 6
+        cacheTrack.translatesAutoresizingMaskIntoConstraints = false
 
-        // 2. Cache Efficiency Bar Section
-        cacheBarLeftLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.2, weight: .semibold)
-        cacheBarLeftLabel.textColor = NSColor(srgbRed: 0.02, green: 0.45, blue: 0.66, alpha: 1.0)
-
-        cacheBarRightLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 9.8, weight: .medium)
-        cacheBarRightLabel.textColor = NSColor(srgbRed: 0.32, green: 0.40, blue: 0.50, alpha: 1.0)
-        cacheBarRightLabel.alignment = .right
-
-        let cacheHeaderRow = NSStackView(views: [cacheBarLeftLabel, NSView(), cacheBarRightLabel])
-        cacheHeaderRow.orientation = .horizontal
-        cacheHeaderRow.alignment = .centerY
-
-        cacheProgressTrack.translatesAutoresizingMaskIntoConstraints = false
-        cacheProgressTrack.heightAnchor.constraint(equalToConstant: 6.5).isActive = true
-
-        let cacheSection = NSStackView(views: [cacheHeaderRow, cacheProgressTrack])
-        cacheSection.orientation = .vertical
-        cacheSection.alignment = .width
-        cacheSection.spacing = 3.5
-
-        // 3. 2x2 Structured Telemetry Tiles
-        let gridRow1 = NSStackView(views: [hitTile, missTile])
-        gridRow1.orientation = .horizontal
-        gridRow1.distribution = .fillEqually
-        gridRow1.spacing = 6
-
-        let gridRow2 = NSStackView(views: [outTile, reqTile])
-        gridRow2.orientation = .horizontal
-        gridRow2.distribution = .fillEqually
-        gridRow2.spacing = 6
-
-        // 4. Footer Reconciliation & Exchange Rate Strip
-        footerLeftLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 9.6, weight: .regular)
-        footerLeftLabel.textColor = NSColor(srgbRed: 0.34, green: 0.42, blue: 0.52, alpha: 1.0)
-        footerLeftLabel.lineBreakMode = .byTruncatingTail
-        footerLeftLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        footerRightLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 9.6, weight: .semibold)
-        footerRightLabel.textColor = NSColor(srgbRed: 0.20, green: 0.28, blue: 0.38, alpha: 1.0)
-        footerRightLabel.alignment = .right
-        footerRightLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        let footerRow = NSStackView(views: [footerLeftLabel, NSView(), footerRightLabel])
-        footerRow.orientation = .horizontal
-        footerRow.alignment = .centerY
-        footerRow.spacing = 6
-
-        let cardDivider = NSView()
-        cardDivider.wantsLayer = true
-        cardDivider.layer?.backgroundColor = NSColor(srgbRed: 0.88, green: 0.92, blue: 0.97, alpha: 1.0).cgColor
-        cardDivider.translatesAutoresizingMaskIntoConstraints = false
-        cardDivider.heightAnchor.constraint(equalToConstant: 1).isActive = true
-
-        let rootStack = NSStackView(views: [
-            heroRow,
-            cacheSection,
-            gridRow1,
-            gridRow2,
-            cardDivider,
-            footerRow
-        ])
-        rootStack.orientation = .vertical
-        rootStack.alignment = .width
-        rootStack.spacing = 6.5
-        rootStack.edgeInsets = NSEdgeInsets(top: 9, left: 11, bottom: 8, right: 11)
-        rootStack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(rootStack)
+        addSubview(captionLabel)
+        addSubview(exitCSVChip)
+        addSubview(rightWindowLabel)
+        addSubview(heroAmountLabel)
+        addSubview(heroSubCurrencyLabel)
+        addSubview(savingsInlineLabel)
+        addSubview(cacheRateLabel)
+        addSubview(requestMetaLabel)
+        addSubview(cacheTrack)
 
         NSLayoutConstraint.activate([
-            rootStack.topAnchor.constraint(equalTo: topAnchor),
-            rootStack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            rootStack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            rootStack.bottomAnchor.constraint(equalTo: bottomAnchor)
+            captionLabel.topAnchor.constraint(equalTo: topAnchor, constant: 13.5),
+            captionLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 15),
+            exitCSVChip.leadingAnchor.constraint(equalTo: captionLabel.trailingAnchor, constant: 6),
+            exitCSVChip.centerYAnchor.constraint(equalTo: captionLabel.centerYAnchor),
+            rightWindowLabel.centerYAnchor.constraint(equalTo: captionLabel.centerYAnchor),
+            rightWindowLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -15),
+            rightWindowLabel.leadingAnchor.constraint(greaterThanOrEqualTo: captionLabel.trailingAnchor, constant: 8),
+
+            heroAmountLabel.topAnchor.constraint(equalTo: captionLabel.bottomAnchor, constant: 7.5),
+            heroAmountLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 15),
+            heroSubCurrencyLabel.leadingAnchor.constraint(equalTo: heroAmountLabel.trailingAnchor, constant: 6.5),
+            heroSubCurrencyLabel.lastBaselineAnchor.constraint(equalTo: heroAmountLabel.lastBaselineAnchor),
+            savingsInlineLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -15),
+            savingsInlineLabel.lastBaselineAnchor.constraint(equalTo: heroAmountLabel.lastBaselineAnchor),
+            savingsInlineLabel.leadingAnchor.constraint(greaterThanOrEqualTo: heroSubCurrencyLabel.trailingAnchor, constant: 8),
+
+            cacheRateLabel.topAnchor.constraint(equalTo: heroAmountLabel.bottomAnchor, constant: 8),
+            cacheRateLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 15),
+            requestMetaLabel.centerYAnchor.constraint(equalTo: cacheRateLabel.centerYAnchor),
+            requestMetaLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -15),
+            requestMetaLabel.leadingAnchor.constraint(greaterThanOrEqualTo: cacheRateLabel.trailingAnchor, constant: 8),
+
+            cacheTrack.topAnchor.constraint(equalTo: cacheRateLabel.bottomAnchor, constant: 5.5),
+            cacheTrack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 15),
+            cacheTrack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -15),
+            cacheTrack.heightAnchor.constraint(equalToConstant: 7.0),
+            cacheTrack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -13.5)
         ])
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = trackingRef { removeTrackingArea(t) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingRef = area
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, alphaValue > 0.01 else { return nil }
+        guard super.hitTest(point) != nil else { return nil }
+        if !exitCSVChip.isHidden {
+            let localPt = superview != nil ? convert(point, from: superview) : point
+            if exitCSVChip.frame.insetBy(dx: -3, dy: -3).contains(localPt) {
+                return exitCSVChip
+            }
+        }
+        return self
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        layer?.borderColor = NSColor(srgbRed: 0.74, green: 0.81, blue: 0.90, alpha: 1.0).cgColor
+        onHoverStateChange?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        layer?.borderColor = NSColor(srgbRed: 0.87, green: 0.91, blue: 0.95, alpha: 1.0).cgColor
+        onHoverStateChange?(false)
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+
+    override func mouseUp(with event: NSEvent) {
+        let pt = convert(event.locationInWindow, from: nil)
+        if rightWindowLabel.frame.insetBy(dx: -12, dy: -8).contains(pt) {
+            let handler = onClickBalanceArea
+            DispatchQueue.main.async {
+                handler?()
+            }
+        }
     }
 
     func update(
+        scopeTitle: String,
         billing: BillingTelemetrySummary,
         csvReconciliation: OfficialCSVReconciliation?,
+        quota: QuotaSnapshot,
         currencyMode: CurrencyDisplayMode,
-        usdToCnyRate: Double,
         currentWindow: BeijingPriceWindow
     ) {
-        let safeRate = max(1.0, usdToCnyRate)
+        self.toolTip = nil
+        let safeRate = max(1.0, quota.usdToCnyRate)
 
         if let csv = csvReconciliation {
-            let tier = DeepSeekPricingEngine.classifyModel(csv.modelName)
+            exitCSVChip.isHidden = false
             let costCny = csv.currency == "USD" ? csv.totalCostInOriginalCurrency * safeRate : csv.totalCostInOriginalCurrency
 
-            eyebrowLabel.stringValue = "官方 CSV 对账 · [\(csv.apiKeyName)] · \(csv.timeRangeLabel)"
-            heroPrimaryCostLabel.stringValue = DeepSeekPricingEngine.formatMoney(
+            captionLabel.stringValue = "官方 CSV 对账 · \(csv.apiKeyName)"
+            rightWindowLabel.stringValue = csv.timeRangeLabel
+
+            heroAmountLabel.stringValue = DeepSeekPricingEngine.formatMoney(
                 amountCny: costCny,
                 mode: currencyMode,
                 usdToCnyRate: safeRate,
-                highPrecision: true
+                highPrecision: costCny > 0 && costCny < 0.1
             )
-            let altMode = currencyMode.next
-            heroSecondaryCostLabel.stringValue = "≈ " + DeepSeekPricingEngine.formatMoney(
+            heroSubCurrencyLabel.stringValue = "≈ " + DeepSeekPricingEngine.formatMoney(
                 amountCny: costCny,
-                mode: altMode,
+                mode: currencyMode.next,
                 usdToCnyRate: safeRate,
-                highPrecision: true
+                highPrecision: false
             )
-            heroPeriodSplitLabel.stringValue = "官方导出明细 · 钱包 \(csv.walletType)(\(csv.currency)) · Key \(csv.maskedApiKey)"
 
-            let savedStr = DeepSeekPricingEngine.formatMoney(
+            let savedText = DeepSeekPricingEngine.formatMoney(
                 amountCny: csv.estimatedCacheSavedCny,
                 mode: currencyMode,
                 usdToCnyRate: safeRate,
                 highPrecision: false
             )
-            savingsTag.text = "Cache 已省 \(savedStr)"
-            windowModelTag.applyColors(
-                bg: NSColor(srgbRed: 0.94, green: 0.976, blue: 1.0, alpha: 1.0),
-                border: NSColor(srgbRed: 0.73, green: 0.90, blue: 0.99, alpha: 1.0),
-                text: NSColor(srgbRed: 0.01, green: 0.41, blue: 0.63, alpha: 1.0)
-            )
-            windowModelTag.text = "\(tier.canonicalModelId) · 官方账单"
+            savingsInlineLabel.stringValue = csv.estimatedCacheSavedCny >= 0.01 ? "已省 \(savedText)" : ""
 
             let hitPct = csv.cacheHitRatePercent
-            cacheBarLeftLabel.stringValue = String(
-                format: "Cache 命中率 %.1f%% · 总输入 %@",
-                hitPct,
-                TimeFormatters.formatTokenCount(csv.totalInputTokens)
-            )
-            cacheBarRightLabel.stringValue = "命中 \(TimeFormatters.formatTokenCount(csv.inputCacheHitTokens)) / 未命中 \(TimeFormatters.formatTokenCount(csv.inputCacheMissTokens))"
-            cacheProgressTrack.hasTraffic = csv.totalInputTokens > 0
-            cacheProgressTrack.hitRatio = hitPct / 100.0
+            cacheRateLabel.stringValue = String(format: "Cache 命中率 %.1f%%", hitPct)
+            requestMetaLabel.stringValue = "\(TimeFormatters.formatIntWithCommas(csv.requestCount)) 次 · 悬停看明细"
+            cacheTrack.hasTraffic = csv.totalInputTokens > 0
+            cacheTrack.hitRatio = hitPct / 100.0
+            return
+        }
 
-            let hitUnit = csv.unitHitPriceCny.map { String(format: "¥%.2f/M", $0 * 1_000_000) } ?? "官方单价"
-            let missUnit = csv.unitMissPriceCny.map { String(format: "¥%.2f/M", $0 * 1_000_000) } ?? "官方单价"
-            let outUnit = csv.unitOutputPriceCny.map { String(format: "¥%.2f/M", $0 * 1_000_000) } ?? "官方单价"
+        exitCSVChip.isHidden = true
+        captionLabel.stringValue = scopeTitle == "全部 Key"
+            ? "\(billing.dateLabel) 总开销"
+            : "\(billing.dateLabel) · \(scopeTitle)"
 
-            let csvHitCost = Double(csv.inputCacheHitTokens) * (csv.unitHitPriceCny ?? 0)
-            let csvMissCost = Double(csv.inputCacheMissTokens) * (csv.unitMissPriceCny ?? 0)
-            let csvOutCost = Double(csv.outputTokens) * (csv.unitOutputPriceCny ?? 0)
-
-            hitTile.update(
-                title: "缓存命中 · Hit",
-                badge: hitUnit,
-                primary: "\(TimeFormatters.formatTokenCount(csv.inputCacheHitTokens)) (\(String(format: "%.1f%%", hitPct)))",
-                sub: String(format: "账单单项 ¥%.4f", csvHitCost),
-                badgeColor: NSColor(srgbRed: 0.02, green: 0.50, blue: 0.36, alpha: 1.0)
-            )
-            missTile.update(
-                title: "未命中 · Miss",
-                badge: missUnit,
-                primary: "\(TimeFormatters.formatTokenCount(csv.inputCacheMissTokens)) (\(String(format: "%.1f%%", max(0, 100 - hitPct))))",
-                sub: String(format: "账单单项 ¥%.4f", csvMissCost),
-                badgeColor: NSColor(srgbRed: 0.72, green: 0.38, blue: 0.04, alpha: 1.0)
-            )
-            outTile.update(
-                title: "输出+推理 · Output",
-                badge: outUnit,
-                primary: TimeFormatters.formatTokenCount(csv.outputTokens),
-                sub: String(format: "账单单项 ¥%.4f", csvOutCost)
-            )
-            let avgCsv = csv.requestCount > 0 ? costCny / Double(csv.requestCount) : 0.0
-            reqTile.update(
-                title: "总请求 · Requests",
-                badge: csv.walletType,
-                primary: "\(TimeFormatters.formatIntWithCommas(csv.requestCount)) 次",
-                sub: String(format: "均次 ¥%.4f", avgCsv)
-            )
-
-            footerLeftLabel.stringValue = String(
-                format: "对比本地 %@ 库内精算 ¥%.4f",
-                billing.dateLabel,
-                billing.spurCostCny
-            )
-            footerRightLabel.stringValue = String(format: "汇率 $1 = ¥%.4f", safeRate)
-        } else {
-            let tier = DeepSeekPricingEngine.classifyModel(billing.dominantModelId)
-            let rates = DeepSeekPricingEngine.unitRatesCNY(tier: tier, window: currentWindow)
-
-            eyebrowLabel.stringValue = "\(billing.dateLabel) 全量精算 · \(tier.specSummary)"
-            heroPrimaryCostLabel.stringValue = DeepSeekPricingEngine.formatMoney(
-                amountCny: billing.spurCostCny,
-                mode: currencyMode,
-                usdToCnyRate: safeRate,
-                highPrecision: true
-            )
-            let altMode = currencyMode.next
-            heroSecondaryCostLabel.stringValue = "≈ " + DeepSeekPricingEngine.formatMoney(
-                amountCny: billing.spurCostCny,
-                mode: altMode,
-                usdToCnyRate: safeRate,
-                highPrecision: true
-            )
-
-            let peakMoney = DeepSeekPricingEngine.formatMoney(
-                amountCny: billing.peakCostCny,
-                mode: currencyMode,
-                usdToCnyRate: safeRate,
-                highPrecision: billing.peakCostCny > 0 && billing.peakCostCny < 0.1
-            )
-            let offPeakMoney = DeepSeekPricingEngine.formatMoney(
-                amountCny: billing.offPeakCostCny,
-                mode: currencyMode,
-                usdToCnyRate: safeRate,
-                highPrecision: billing.offPeakCostCny > 0 && billing.offPeakCostCny < 0.1
-            )
-            heroPeriodSplitLabel.stringValue = "忙时原价 \(peakMoney) (\(billing.peakRequestCount)次) · 闲时5折 \(offPeakMoney) (\(billing.offPeakRequestCount)次)"
-
-            let cacheSavedText = DeepSeekPricingEngine.formatMoney(
-                amountCny: billing.cacheSavedCny,
+        if let bal = quota.apiTotalBalance {
+            let balCny = quota.apiCurrency == "USD" ? bal * safeRate : bal
+            let balStr = DeepSeekPricingEngine.formatMoney(
+                amountCny: balCny,
                 mode: currencyMode,
                 usdToCnyRate: safeRate,
                 highPrecision: false
             )
-            if billing.offPeakSavedCny >= 0.01 {
-                let offSavedText = DeepSeekPricingEngine.formatMoney(
-                    amountCny: billing.offPeakSavedCny,
-                    mode: currencyMode,
-                    usdToCnyRate: safeRate,
-                    highPrecision: false
-                )
-                savingsTag.text = "缓省 \(cacheSavedText) · 闲省 \(offSavedText)"
-            } else {
-                savingsTag.text = "Cache 已省 \(cacheSavedText)"
-            }
-
-            if currentWindow == .peak {
-                windowModelTag.applyColors(
-                    bg: NSColor(srgbRed: 1.0, green: 0.965, blue: 0.91, alpha: 1.0),
-                    border: NSColor(srgbRed: 0.97, green: 0.82, blue: 0.58, alpha: 1.0),
-                    text: NSColor(srgbRed: 0.72, green: 0.36, blue: 0.03, alpha: 1.0)
-                )
-            } else {
-                windowModelTag.applyColors(
-                    bg: NSColor(srgbRed: 0.94, green: 0.976, blue: 1.0, alpha: 1.0),
-                    border: NSColor(srgbRed: 0.73, green: 0.90, blue: 0.99, alpha: 1.0),
-                    text: NSColor(srgbRed: 0.01, green: 0.41, blue: 0.63, alpha: 1.0)
-                )
-            }
-            windowModelTag.text = "\(tier.canonicalModelId) · 当前\(currentWindow.badgeText)"
-
-            let hitPct = billing.cacheHitRatePercent
-            cacheBarLeftLabel.stringValue = String(
-                format: "Cache 命中率 %.1f%% · 总输入 %@",
-                hitPct,
-                TimeFormatters.formatTokenCount(billing.totalInputTokens)
-            )
-            cacheBarRightLabel.stringValue = "命中 \(TimeFormatters.formatTokenCount(billing.inputCacheHitTokens)) / 未命中 \(TimeFormatters.formatTokenCount(billing.inputCacheMissTokens))"
-            cacheProgressTrack.hasTraffic = billing.totalInputTokens > 0
-            cacheProgressTrack.hitRatio = hitPct / 100.0
-
-            let hitUnitStr = rates.map { String(format: "当前 ¥%.2f/M", $0.hitPerMillion) } ?? "实时折算"
-            let missUnitStr = rates.map { String(format: "当前 ¥%.2f/M", $0.missPerMillion) } ?? "实时折算"
-            let outUnitStr = rates.map { String(format: "当前 ¥%.2f/M", $0.outPerMillion) } ?? "实时折算"
-
-            let hitCostText = DeepSeekPricingEngine.formatMoney(
-                amountCny: billing.cacheHitCostCny,
-                mode: currencyMode,
-                usdToCnyRate: safeRate,
-                highPrecision: billing.cacheHitCostCny < 1.0
-            )
-            hitTile.update(
-                title: "缓存命中 · Hit",
-                badge: hitUnitStr,
-                primary: "\(TimeFormatters.formatTokenCount(billing.inputCacheHitTokens)) (\(String(format: "%.1f%%", hitPct)))",
-                sub: "实付 \(hitCostText) · 省98%输入单价",
-                badgeColor: NSColor(srgbRed: 0.02, green: 0.50, blue: 0.36, alpha: 1.0)
-            )
-
-            let missCostText = DeepSeekPricingEngine.formatMoney(
-                amountCny: billing.cacheMissCostCny,
-                mode: currencyMode,
-                usdToCnyRate: safeRate,
-                highPrecision: billing.cacheMissCostCny < 1.0
-            )
-            let writeSuffix = billing.cacheWriteTokens > 0
-                ? " · 写缓 \(TimeFormatters.formatTokenCount(billing.cacheWriteTokens))"
-                : " · 新增上下文"
-            missTile.update(
-                title: "未命中 · Miss",
-                badge: missUnitStr,
-                primary: "\(TimeFormatters.formatTokenCount(billing.inputCacheMissTokens)) (\(String(format: "%.1f%%", billing.cacheMissRatePercent)))",
-                sub: "实付 \(missCostText)\(writeSuffix)",
-                badgeColor: NSColor(srgbRed: 0.72, green: 0.38, blue: 0.04, alpha: 1.0)
-            )
-
-            let outCostText = DeepSeekPricingEngine.formatMoney(
-                amountCny: billing.outputCostCny,
-                mode: currencyMode,
-                usdToCnyRate: safeRate,
-                highPrecision: billing.outputCostCny < 1.0
-            )
-            let reasonDetail = billing.reasoningTokens > 0
-                ? "含思维链 \(TimeFormatters.formatTokenCount(billing.reasoningTokens))"
-                : "标准输出+推理"
-            outTile.update(
-                title: "输出+推理 · Output",
-                badge: outUnitStr,
-                primary: TimeFormatters.formatTokenCount(billing.outputTokens),
-                sub: "实付 \(outCostText) · \(reasonDetail)"
-            )
-
-            let avgCostText = DeepSeekPricingEngine.formatMoney(
-                amountCny: billing.avgCostPerRequestCny,
-                mode: currencyMode,
-                usdToCnyRate: safeRate,
-                highPrecision: true
-            )
-            reqTile.update(
-                title: "时段分布 · Requests",
-                badge: String(format: "闲时 %.0f%%", billing.offPeakRatePercent),
-                primary: "\(TimeFormatters.formatIntWithCommas(billing.requestCount)) 次",
-                sub: "忙\(billing.peakRequestCount) / 闲\(billing.offPeakRequestCount) · 均 \(avgCostText)"
-            )
-
-            let rawCny = billing.opencodeRawUsd * safeRate
-            footerLeftLabel.stringValue = String(
-                format: "opencode静态估 $%.4f (≈¥%.2f·全天按5折未计忙时)",
-                billing.opencodeRawUsd,
-                rawCny
-            )
-            footerRightLabel.stringValue = String(format: "汇率 $1 = ¥%.4f", safeRate)
+            rightWindowLabel.stringValue = "余额 \(balStr) · \(currentWindow.badgeText)"
+        } else {
+            rightWindowLabel.stringValue = currentWindow.badgeText
         }
+
+        heroAmountLabel.stringValue = DeepSeekPricingEngine.formatMoney(
+            amountCny: billing.spurCostCny,
+            mode: currencyMode,
+            usdToCnyRate: safeRate,
+            highPrecision: billing.spurCostCny > 0 && billing.spurCostCny < 0.1
+        )
+        heroSubCurrencyLabel.stringValue = "≈ " + DeepSeekPricingEngine.formatMoney(
+            amountCny: billing.spurCostCny,
+            mode: currencyMode.next,
+            usdToCnyRate: safeRate,
+            highPrecision: billing.spurCostCny > 0 && billing.spurCostCny < 0.1
+        )
+
+        let totalSavedCny = billing.cacheSavedCny + billing.offPeakSavedCny
+        if totalSavedCny >= 0.01 {
+            let savedStr = DeepSeekPricingEngine.formatMoney(
+                amountCny: totalSavedCny,
+                mode: currencyMode,
+                usdToCnyRate: safeRate,
+                highPrecision: false
+            )
+            savingsInlineLabel.stringValue = "已省 \(savedStr)"
+        } else {
+            savingsInlineLabel.stringValue = ""
+        }
+
+        let hitPct = billing.cacheHitRatePercent
+        cacheRateLabel.stringValue = String(format: "Cache 命中率 %.1f%%", hitPct)
+        requestMetaLabel.stringValue = billing.requestCount > 0
+            ? "\(TimeFormatters.formatIntWithCommas(billing.requestCount)) 次 · 悬停看明细"
+            : "今日暂无调用"
+        cacheTrack.hasTraffic = billing.totalInputTokens > 0
+        cacheTrack.hitRatio = hitPct / 100.0
     }
 }
 
-// MARK: - Native CoreGraphics Today 24-Hour Interactive Chart View (Peak Shading + Hover Crosshair)
+// MARK: - Minimalist 24-Bar Sparkline Chart (Zero Axes · Peak Subtle Tint · Hover Pill)
 
-final class NativeTodayHourlyChartView: NSView {
+final class SparklineBarChartView: NSView {
     var points: [TodayHourlyPoint] = [] {
         didSet {
             if points != oldValue {
@@ -600,28 +977,53 @@ final class NativeTodayHourlyChartView: NSView {
             }
         }
     }
-    var metricKind: ChartMetricKind = .requests {
+    var currencyMode: CurrencyDisplayMode = .cny {
         didSet {
-            if metricKind != oldValue {
+            if currencyMode != oldValue {
                 needsDisplay = true
             }
         }
     }
+    var usdToCnyRate: Double = 7.12 {
+        didSet {
+            if abs(usdToCnyRate - oldValue) > 0.0001 {
+                needsDisplay = true
+            }
+        }
+    }
+    var onHoverReadoutChange: ((String?) -> Void)?
 
     private var hoveredHour: Int? {
         didSet {
             if hoveredHour != oldValue {
                 needsDisplay = true
+                if let h = hoveredHour, h >= 0, h < points.count {
+                    let pt = points[h]
+                    let costStr = DeepSeekPricingEngine.formatMoney(
+                        amountCny: pt.costCny,
+                        mode: currencyMode,
+                        usdToCnyRate: max(1.0, usdToCnyRate),
+                        highPrecision: pt.costCny > 0 && pt.costCny < 0.1
+                    )
+                    let nextH = (pt.hour + 1) % 24
+                    onHoverReadoutChange?(String(
+                        format: "%02d:00-%02d:00: %d次 | %@",
+                        pt.hour,
+                        nextH,
+                        pt.requestCount,
+                        costStr
+                    ))
+                } else {
+                    onHoverReadoutChange?(nil)
+                }
             }
         }
     }
-    private var trackingAreaRef: NSTrackingArea?
-
-    override var isFlipped: Bool { false }
+    private var trackingRef: NSTrackingArea?
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let existing = trackingAreaRef {
+        if let existing = trackingRef {
             removeTrackingArea(existing)
         }
         let area = NSTrackingArea(
@@ -631,20 +1033,20 @@ final class NativeTodayHourlyChartView: NSView {
             userInfo: nil
         )
         addTrackingArea(area)
-        trackingAreaRef = area
+        trackingRef = area
     }
 
     override func mouseMoved(with event: NSEvent) {
+        guard points.count == 24 else { return }
         let pt = convert(event.locationInWindow, from: nil)
-        let leftPad: CGFloat = 42
-        let rightPad: CGFloat = 12
-        let plotW = max(40, bounds.width - leftPad - rightPad)
-        let stepX = plotW / 23.0
-        guard pt.x >= leftPad - stepX * 0.5, pt.x <= leftPad + plotW + stepX * 0.5 else {
+        let hPad: CGFloat = 10
+        let plotW = max(48, bounds.width - hPad * 2)
+        guard pt.x >= hPad - 4, pt.x <= bounds.width - hPad + 4 else {
             hoveredHour = nil
             return
         }
-        let rawIdx = Int(((pt.x - leftPad) / stepX).rounded())
+        let slotW = plotW / 24.0
+        let rawIdx = Int(((pt.x - hPad) / slotW).rounded(.down))
         hoveredHour = max(0, min(23, rawIdx))
     }
 
@@ -656,366 +1058,325 @@ final class NativeTodayHourlyChartView: NSView {
         super.draw(dirtyRect)
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
 
-        let bounds = self.bounds
-        let bgPath = CGPath(roundedRect: bounds, cornerWidth: 10, cornerHeight: 10, transform: nil)
+        let b = bounds
+        let bgPath = CGPath(roundedRect: b, cornerWidth: 10, cornerHeight: 10, transform: nil)
         ctx.addPath(bgPath)
-        ctx.setFillColor(NSColor(srgbRed: 1.0, green: 1.0, blue: 1.0, alpha: 0.98).cgColor)
+        ctx.setFillColor(NSColor.white.cgColor)
         ctx.fillPath()
 
         ctx.addPath(bgPath)
-        ctx.setStrokeColor(NSColor(srgbRed: 0.83, green: 0.89, blue: 0.95, alpha: 1.0).cgColor)
+        ctx.setStrokeColor(NSColor(srgbRed: 0.87, green: 0.91, blue: 0.95, alpha: 1.0).cgColor)
         ctx.setLineWidth(1.0)
         ctx.strokePath()
 
         guard points.count == 24 else { return }
 
-        let leftPad: CGFloat = 42
-        let rightPad: CGFloat = 12
-        let bottomPad: CGFloat = 19
-        let topPad: CGFloat = 12
-        let plotW = max(40, bounds.width - leftPad - rightPad)
-        let plotH = max(24, bounds.height - topPad - bottomPad)
-        let stepX = plotW / 23.0
+        let hPad: CGFloat = 10
+        let vPadBottom: CGFloat = 7
+        let vPadTop: CGFloat = 9
+        let plotW = max(48, b.width - hPad * 2)
+        let plotH = max(20, b.height - vPadBottom - vPadTop)
+        let slotW = plotW / 24.0
+        let barW = max(4.0, slotW - 4.2)
 
-        // 1. 绘制北京时间忙时时段淡琥珀色底纹 (09:00-12:00 & 14:00-18:00)，直观呈现忙时2倍计价区间
         ctx.saveGState()
-        ctx.setFillColor(NSColor(srgbRed: 0.96, green: 0.62, blue: 0.07, alpha: 0.065).cgColor)
+        ctx.setFillColor(NSColor(srgbRed: 0.96, green: 0.62, blue: 0.07, alpha: 0.045).cgColor)
         for (idx, pt) in points.enumerated() where pt.isPeakHour {
-            let cx = leftPad + CGFloat(idx) * stepX
-            let x0 = max(leftPad, cx - stepX * 0.5)
-            let x1 = min(leftPad + plotW, cx + stepX * 0.5)
-            ctx.fill(CGRect(x: x0, y: bottomPad, width: max(1, x1 - x0), height: plotH))
+            let sx = hPad + CGFloat(idx) * slotW
+            ctx.fill(CGRect(x: sx, y: 3, width: slotW, height: b.height - 6))
         }
         ctx.restoreGState()
 
-        let rawValues: [Double] = points.map { pt in
-            switch metricKind {
-            case .requests: return Double(pt.requestCount)
-            case .costCny:  return pt.costCny
-            case .cacheHit: return pt.cacheHitPercent
-            }
-        }
-        let rawMax = rawValues.max() ?? 0.0
-        let maxVal: Double = {
-            switch metricKind {
-            case .requests: return max(rawMax, 1.0) * 1.16
-            case .costCny:  return max(rawMax, 0.01) * 1.16
-            case .cacheHit: return 105.0
-            }
-        }()
+        let maxReq = max(1, points.map { $0.requestCount }.max() ?? 1)
 
-        // 2. 水平参考虚线
-        ctx.saveGState()
-        ctx.setStrokeColor(NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 0.065).cgColor)
-        ctx.setLineWidth(1.0)
-        ctx.setLineDash(phase: 0, lengths: [3, 3])
-        for i in 0...2 {
-            let y = bottomPad + plotH * (CGFloat(i) / 2.0)
-            ctx.move(to: CGPoint(x: leftPad, y: y))
-            ctx.addLine(to: CGPoint(x: leftPad + plotW, y: y))
-        }
-        ctx.strokePath()
-        ctx.restoreGState()
-
-        let coords: [CGPoint] = rawValues.enumerated().map { idx, v in
-            let x = leftPad + CGFloat(idx) * stepX
-            let y = bottomPad + CGFloat(min(1.0, v / maxVal)) * plotH
-            return CGPoint(x: x, y: y)
-        }
-
-        let lineColor: NSColor = {
-            switch metricKind {
-            case .requests: return NSColor(srgbRed: 0.01, green: 0.52, blue: 0.78, alpha: 1.0)
-            case .costCny:  return NSColor(srgbRed: 0.04, green: 0.59, blue: 0.41, alpha: 1.0)
-            case .cacheHit: return NSColor(srgbRed: 0.03, green: 0.55, blue: 0.72, alpha: 1.0)
-            }
-        }()
-
-        // 3. 渐变面积与平滑贝塞尔曲线
-        let areaPath = CGMutablePath()
-        areaPath.move(to: CGPoint(x: coords[0].x, y: bottomPad))
-        areaPath.addLine(to: coords[0])
-        for i in 1..<coords.count {
-            let prev = coords[i - 1]
-            let curr = coords[i]
-            let midX = (prev.x + curr.x) * 0.5
-            areaPath.addCurve(
-                to: curr,
-                control1: CGPoint(x: midX, y: prev.y),
-                control2: CGPoint(x: midX, y: curr.y)
-            )
-        }
-        areaPath.addLine(to: CGPoint(x: coords[23].x, y: bottomPad))
-        areaPath.closeSubpath()
-
-        ctx.saveGState()
-        ctx.addPath(areaPath)
-        ctx.clip()
-        let cs = CGColorSpaceCreateDeviceRGB()
-        let gradColors = [
-            lineColor.withAlphaComponent(0.20).cgColor,
-            lineColor.withAlphaComponent(0.01).cgColor
-        ] as CFArray
-        if let grad = CGGradient(colorsSpace: cs, colors: gradColors, locations: [0.0, 1.0]) {
-            ctx.drawLinearGradient(
-                grad,
-                start: CGPoint(x: 0, y: bottomPad + plotH),
-                end: CGPoint(x: 0, y: bottomPad),
-                options: []
-            )
-        }
-        ctx.restoreGState()
-
-        let strokePath = CGMutablePath()
-        strokePath.move(to: coords[0])
-        for i in 1..<coords.count {
-            let prev = coords[i - 1]
-            let curr = coords[i]
-            let midX = (prev.x + curr.x) * 0.5
-            strokePath.addCurve(
-                to: curr,
-                control1: CGPoint(x: midX, y: prev.y),
-                control2: CGPoint(x: midX, y: curr.y)
-            )
-        }
-        ctx.addPath(strokePath)
-        ctx.setStrokeColor(lineColor.cgColor)
-        ctx.setLineWidth(1.8)
-        ctx.setLineCap(.round)
-        ctx.strokePath()
-
-        let labelAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 8.8, weight: .regular),
-            .foregroundColor: NSColor(srgbRed: 0.36, green: 0.43, blue: 0.52, alpha: 1.0)
-        ]
-        let nowAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 9.0, weight: .semibold),
-            .foregroundColor: lineColor
-        ]
-
-        let tickHours: Set<Int> = [0, 6, 9, 12, 14, 18, 23]
         for (idx, pt) in points.enumerated() {
-            let c = coords[idx]
+            let sx = hPad + CGFloat(idx) * slotW
+            let bx = sx + (slotW - barW) * 0.5
             let isHovered = (hoveredHour == idx)
-            if isHovered || pt.isCurrentHour || pt.requestCount > 0 {
-                let r: CGFloat = isHovered ? 3.6 : (pt.isCurrentHour ? 3.0 : 2.1)
-                ctx.setFillColor((isHovered || pt.isCurrentHour) ? lineColor.cgColor : NSColor.white.cgColor)
-                ctx.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
-                ctx.setStrokeColor(lineColor.cgColor)
-                ctx.setLineWidth(1.4)
-                ctx.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+
+            let barH: CGFloat
+            if pt.requestCount > 0 {
+                let ratio = CGFloat(pt.requestCount) / CGFloat(maxReq)
+                barH = max(4.5, ratio * plotH)
+            } else {
+                barH = 2.0
             }
 
-            if tickHours.contains(pt.hour) {
-                let str = "\(pt.hourLabel)h"
-                let nsStr = NSString(string: str)
-                let attrs = pt.isCurrentHour ? nowAttrs : labelAttrs
-                let sz = nsStr.size(withAttributes: attrs)
-                nsStr.draw(at: CGPoint(x: c.x - sz.width * 0.5, y: 3), withAttributes: attrs)
+            let barRect = CGRect(x: bx, y: vPadBottom, width: barW, height: barH)
+            let barPath = CGPath(roundedRect: barRect, cornerWidth: 2.2, cornerHeight: 2.2, transform: nil)
+            ctx.addPath(barPath)
+
+            if isHovered {
+                ctx.setFillColor(NSColor(srgbRed: 0.01, green: 0.41, blue: 0.63, alpha: 1.0).cgColor)
+            } else if pt.requestCount == 0 {
+                ctx.setFillColor(NSColor(srgbRed: 0.89, green: 0.92, blue: 0.96, alpha: 1.0).cgColor)
+            } else if pt.isCurrentHour {
+                ctx.setFillColor(NSColor(srgbRed: 0.01, green: 0.52, blue: 0.78, alpha: 1.0).cgColor)
+            } else if pt.isPeakHour {
+                ctx.setFillColor(NSColor(srgbRed: 0.14, green: 0.65, blue: 0.91, alpha: 0.85).cgColor)
+            } else {
+                ctx.setFillColor(NSColor(srgbRed: 0.34, green: 0.76, blue: 0.96, alpha: 0.78).cgColor)
             }
+            ctx.fillPath()
         }
 
-        // 4. Y 轴峰值与中位刻度
-        let maxText: String
-        let midText: String
-        switch metricKind {
-        case .requests:
-            maxText = "\(Int(rawMax))次"
-            midText = rawMax >= 2 ? "\(Int(rawMax / 2))次" : ""
-        case .costCny:
-            maxText = String(format: "¥%.2f", rawMax)
-            midText = rawMax >= 0.02 ? String(format: "¥%.2f", rawMax * 0.5) : ""
-        case .cacheHit:
-            maxText = "100%"
-            midText = "50%"
-        }
-        NSString(string: maxText).draw(at: CGPoint(x: 5, y: bottomPad + plotH - 9), withAttributes: labelAttrs)
-        if !midText.isEmpty {
-            NSString(string: midText).draw(at: CGPoint(x: 5, y: bottomPad + plotH * 0.5 - 5), withAttributes: labelAttrs)
-        }
-        NSString(string: "0").draw(at: CGPoint(x: 5, y: bottomPad - 3), withAttributes: labelAttrs)
-
-        // 5. 鼠标悬停十字准星与实时分时浮窗读数
         if let hIdx = hoveredHour, hIdx >= 0, hIdx < points.count {
             let pt = points[hIdx]
-            let cx = coords[hIdx].x
-            ctx.saveGState()
-            ctx.setStrokeColor(lineColor.withAlphaComponent(0.45).cgColor)
-            ctx.setLineWidth(1.0)
-            ctx.setLineDash(phase: 0, lengths: [2, 2])
-            ctx.move(to: CGPoint(x: cx, y: bottomPad))
-            ctx.addLine(to: CGPoint(x: cx, y: bottomPad + plotH))
-            ctx.strokePath()
-            ctx.restoreGState()
-
-            let winTag = pt.isPeakHour ? "忙时原价" : "闲时5折"
-            let infoStr = String(
-                format: "%02d:00 (%@) · %d次 · ¥%.4f · 缓%.0f%%",
-                pt.hour,
-                winTag,
-                pt.requestCount,
-                pt.costCny,
-                pt.cacheHitPercent
+            let nextH = (pt.hour + 1) % 24
+            let costStr = DeepSeekPricingEngine.formatMoney(
+                amountCny: pt.costCny,
+                mode: currencyMode,
+                usdToCnyRate: max(1.0, usdToCnyRate),
+                highPrecision: pt.costCny > 0 && pt.costCny < 0.1
             )
-            let pillAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 9.2, weight: .semibold),
-                .foregroundColor: NSColor(srgbRed: 0.07, green: 0.12, blue: 0.20, alpha: 1.0)
+            let tipText = String(format: "%02d:00-%02d:00: %d次 | %@", pt.hour, nextH, pt.requestCount, costStr)
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 9.8, weight: .semibold),
+                .foregroundColor: NSColor.white
             ]
-            let nsInfo = NSString(string: infoStr)
-            let textSize = nsInfo.size(withAttributes: pillAttrs)
-            let boxW = textSize.width + 10
-            let boxH = textSize.height + 4
-            let boxX = min(max(leftPad + 2, cx - boxW * 0.5), bounds.width - rightPad - boxW)
-            let boxY = bounds.height - boxH - 3
+            let nsTip = NSString(string: tipText)
+            let sz = nsTip.size(withAttributes: attrs)
+            let pillW = sz.width + 12
+            let pillH = sz.height + 5
+            let centerBarX = hPad + (CGFloat(hIdx) + 0.5) * slotW
+            let pillX = min(max(6, centerBarX - pillW * 0.5), b.width - pillW - 6)
+            let pillY = b.height - pillH - 4
 
-            let boxRect = CGRect(x: boxX, y: boxY, width: boxW, height: boxH)
-            let boxPath = CGPath(roundedRect: boxRect, cornerWidth: 5, cornerHeight: 5, transform: nil)
-            ctx.addPath(boxPath)
-            ctx.setFillColor(NSColor(srgbRed: 0.95, green: 0.98, blue: 1.0, alpha: 0.96).cgColor)
+            let pillRect = CGRect(x: pillX, y: pillY, width: pillW, height: pillH)
+            let pillPath = CGPath(roundedRect: pillRect, cornerWidth: 5, cornerHeight: 5, transform: nil)
+            ctx.addPath(pillPath)
+            ctx.setFillColor(NSColor(srgbRed: 0.08, green: 0.12, blue: 0.20, alpha: 0.92).cgColor)
             ctx.fillPath()
-            ctx.addPath(boxPath)
-            ctx.setStrokeColor(lineColor.withAlphaComponent(0.45).cgColor)
-            ctx.setLineWidth(1.0)
-            ctx.strokePath()
 
-            nsInfo.draw(at: CGPoint(x: boxX + 5, y: boxY + 2), withAttributes: pillAttrs)
-        } else if points.contains(where: { $0.isPeakHour }) {
-            let legend = NSString(string: "浅橙底=工作日忙时")
-            let legAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 8.5, weight: .medium),
-                .foregroundColor: NSColor(srgbRed: 0.68, green: 0.44, blue: 0.12, alpha: 0.85)
-            ]
-            let sz = legend.size(withAttributes: legAttrs)
-            legend.draw(at: CGPoint(x: bounds.width - rightPad - sz.width - 2, y: bounds.height - sz.height - 3), withAttributes: legAttrs)
+            nsTip.draw(at: CGPoint(x: pillX + 6, y: pillY + 2.5), withAttributes: attrs)
         }
     }
 }
 
-// MARK: - 2-Line Master Session Card + Collapsible Indented Sub-Agent Row View
+// MARK: - Sub-Agent Count Chip & Minimalist Single-Line Session Row (1:1 Design Parity)
 
-final class SessionRowView: NSControl {
+private final class SubCountChipControl: NSView {
+    var onTap: (() -> Void)?
+
+    private let labelField = NSTextField(labelWithString: "")
+    private var isHovered = false
+    private var trackingRef: NSTrackingArea?
+
+    var text: String {
+        get { labelField.stringValue }
+        set { labelField.stringValue = newValue }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 4.5
+
+        labelField.font = NSFont.monospacedDigitSystemFont(ofSize: 10.2, weight: .semibold)
+        labelField.alignment = .center
+        labelField.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(labelField)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 19),
+            labelField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            labelField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5.5),
+            labelField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5.5)
+        ])
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        updateStyle()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = trackingRef { removeTrackingArea(t) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingRef = area
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, alphaValue > 0.01 else { return nil }
+        return super.hitTest(point) != nil ? self : nil
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateStyle()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateStyle()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        layer?.backgroundColor = NSColor(srgbRed: 0.85, green: 0.89, blue: 0.94, alpha: 1.0).cgColor
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let pt = convert(event.locationInWindow, from: nil)
+        updateStyle()
+        if bounds.insetBy(dx: -3, dy: -3).contains(pt), let action = onTap {
+            DispatchQueue.main.async {
+                action()
+            }
+        }
+    }
+
+    private func updateStyle() {
+        layer?.backgroundColor = isHovered
+            ? NSColor(srgbRed: 0.89, green: 0.92, blue: 0.96, alpha: 1.0).cgColor
+            : NSColor(srgbRed: 0.945, green: 0.960, blue: 0.980, alpha: 1.0).cgColor
+        labelField.textColor = isHovered
+            ? NSColor(srgbRed: 0.12, green: 0.18, blue: 0.28, alpha: 1.0)
+            : NSColor(srgbRed: 0.39, green: 0.46, blue: 0.56, alpha: 1.0)
+    }
+}
+
+final class SessionRowView: NSView {
     var onClick: (() -> Void)?
-    var onToggleCollapse: (() -> Void)?
+    var onToggleExpand: (() -> Void)?
 
     private(set) var boundState: AgentRunState = .completed
     private(set) var boundEnteredAtMs: Int64 = 0
     private(set) var isSubTaskRow = false
 
-    private var cachedCostSuffix: String?
-    private var cachedCacheBadgeSuffix: String?
-    private var cachedDurationSuffix: String?
-    private var cachedTerminalBadge: String?
-    private var currentIsAutoFocused: Bool = false
+    private var isHovered = false
+    private var currentIsAutoFocused = false
+    private var trackingRef: NSTrackingArea?
 
-    private let iconView = NSImageView()
+    private let iconView = RetinaAspectFitImageView(pointSize: 18)
     private let roleBadgeField = NSTextField(labelWithString: "")
     private let titleField = NSTextField(labelWithString: "")
-    private let liveTimerField = NSTextField(labelWithString: "")
-    private var collapseBtn: NSButton?
-
-    // Master 第二行精细信息栏 / SubTask 单行右侧聚合信息栏
-    private let subMetaLeftField = NSTextField(labelWithString: "")
-    private let subMetaRightField = NSTextField(labelWithString: "")
-    private let rightMetaField = NSTextField(labelWithString: "")
+    private var expandChip: SubCountChipControl?
+    private let costField = NSTextField(labelWithString: "")
+    private let timerField = NSTextField(labelWithString: "")
+    private let goBadgeField = NSTextField(labelWithString: "↗")
 
     init(isSubTask: Bool) {
         self.isSubTaskRow = isSubTask
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = isSubTask ? 7 : 9
+        layer?.cornerRadius = 8
+        layer?.borderWidth = 1.0
+        layer?.borderColor = NSColor.clear.cgColor
 
-        iconView.translatesAutoresizingMaskIntoConstraints = false
         titleField.lineBreakMode = .byTruncatingTail
+        titleField.usesSingleLineMode = true
+        titleField.translatesAutoresizingMaskIntoConstraints = false
         titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         if isSubTask {
-            let treeGlyph = NSTextField(labelWithString: "↳")
-            treeGlyph.font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .medium)
-            treeGlyph.textColor = NSColor(srgbRed: 0.48, green: 0.56, blue: 0.66, alpha: 1.0)
-            treeGlyph.setContentCompressionResistancePriority(.required, for: .horizontal)
+            let treePrefix = NSTextField(labelWithString: "└─")
+            treePrefix.font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
+            treePrefix.textColor = NSColor(srgbRed: 0.72, green: 0.78, blue: 0.85, alpha: 1.0)
+            treePrefix.translatesAutoresizingMaskIntoConstraints = false
+            treePrefix.setContentHuggingPriority(.required, for: .horizontal)
+            treePrefix.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-            roleBadgeField.font = NSFont.monospacedSystemFont(ofSize: 9.8, weight: .semibold)
+            roleBadgeField.font = NSFont.monospacedSystemFont(ofSize: 10.2, weight: .semibold)
             roleBadgeField.textColor = NSColor(srgbRed: 0.02, green: 0.45, blue: 0.68, alpha: 1.0)
+            roleBadgeField.translatesAutoresizingMaskIntoConstraints = false
+            roleBadgeField.setContentHuggingPriority(.required, for: .horizontal)
             roleBadgeField.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-            rightMetaField.alignment = .right
-            rightMetaField.setContentCompressionResistancePriority(.required, for: .horizontal)
+            costField.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .medium)
+            costField.textColor = NSColor(srgbRed: 0.52, green: 0.59, blue: 0.68, alpha: 1.0)
+            costField.alignment = .right
+            costField.translatesAutoresizingMaskIntoConstraints = false
+            costField.setContentHuggingPriority(.required, for: .horizontal)
+            costField.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+            addSubview(treePrefix)
+            addSubview(roleBadgeField)
+            addSubview(titleField)
+            addSubview(costField)
 
             NSLayoutConstraint.activate([
-                iconView.widthAnchor.constraint(equalToConstant: 13),
-                iconView.heightAnchor.constraint(equalToConstant: 13)
-            ])
+                heightAnchor.constraint(equalToConstant: 26),
+                treePrefix.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 26),
+                treePrefix.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            let hStack = NSStackView(views: [treeGlyph, iconView, roleBadgeField, titleField, NSView(), rightMetaField])
-            hStack.orientation = .horizontal
-            hStack.alignment = .centerY
-            hStack.spacing = 4.5
-            hStack.edgeInsets = NSEdgeInsets(top: 4.5, left: 14, bottom: 4.5, right: 8)
-            hStack.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(hStack)
+                roleBadgeField.leadingAnchor.constraint(equalTo: treePrefix.trailingAnchor, constant: 5),
+                roleBadgeField.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            NSLayoutConstraint.activate([
-                heightAnchor.constraint(greaterThanOrEqualToConstant: 26),
-                hStack.topAnchor.constraint(equalTo: topAnchor),
-                hStack.leadingAnchor.constraint(equalTo: leadingAnchor),
-                hStack.trailingAnchor.constraint(equalTo: trailingAnchor),
-                hStack.bottomAnchor.constraint(equalTo: bottomAnchor)
+                titleField.leadingAnchor.constraint(equalTo: roleBadgeField.trailingAnchor, constant: 5),
+                titleField.centerYAnchor.constraint(equalTo: centerYAnchor),
+                titleField.trailingAnchor.constraint(lessThanOrEqualTo: costField.leadingAnchor, constant: -8),
+
+                costField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+                costField.centerYAnchor.constraint(equalTo: centerYAnchor)
             ])
         } else {
-            NSLayoutConstraint.activate([
-                iconView.widthAnchor.constraint(equalToConstant: 16),
-                iconView.heightAnchor.constraint(equalToConstant: 16)
-            ])
+            let chip = SubCountChipControl(frame: .zero)
+            chip.isHidden = true
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            chip.onTap = { [weak self] in
+                self?.onToggleExpand?()
+            }
+            self.expandChip = chip
 
-            liveTimerField.alignment = .right
-            liveTimerField.setContentCompressionResistancePriority(.required, for: .horizontal)
+            costField.font = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .medium)
+            costField.textColor = NSColor(srgbRed: 0.39, green: 0.46, blue: 0.56, alpha: 1.0)
+            costField.alignment = .right
+            costField.translatesAutoresizingMaskIntoConstraints = false
+            costField.setContentHuggingPriority(.required, for: .horizontal)
+            costField.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-            let cBtn = NSButton(title: "", target: self, action: #selector(handleCollapseButtonTap))
-            cBtn.bezelStyle = .inline
-            cBtn.controlSize = .mini
-            cBtn.font = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .semibold)
-            cBtn.isHidden = true
-            cBtn.setContentCompressionResistancePriority(.required, for: .horizontal)
-            cBtn.setContentHuggingPriority(.required, for: .horizontal)
-            self.collapseBtn = cBtn
+            timerField.font = NSFont.monospacedDigitSystemFont(ofSize: 10.8, weight: .semibold)
+            timerField.alignment = .right
+            timerField.translatesAutoresizingMaskIntoConstraints = false
+            timerField.setContentHuggingPriority(.required, for: .horizontal)
+            timerField.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-            let topLine = NSStackView(views: [iconView, titleField, NSView(), liveTimerField, cBtn])
-            topLine.orientation = .horizontal
-            topLine.alignment = .centerY
-            topLine.spacing = 6
+            goBadgeField.font = NSFont.systemFont(ofSize: 10.5, weight: .semibold)
+            goBadgeField.textColor = NSColor(srgbRed: 0.72, green: 0.78, blue: 0.85, alpha: 1.0)
+            goBadgeField.translatesAutoresizingMaskIntoConstraints = false
+            goBadgeField.setContentHuggingPriority(.required, for: .horizontal)
+            goBadgeField.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-            subMetaLeftField.font = NSFont.monospacedDigitSystemFont(ofSize: 9.8, weight: .regular)
-            subMetaLeftField.textColor = NSColor(srgbRed: 0.30, green: 0.38, blue: 0.48, alpha: 1.0)
-            subMetaLeftField.lineBreakMode = .byTruncatingTail
-            subMetaLeftField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let leftRow = NSStackView(views: [iconView, titleField, chip])
+            leftRow.orientation = .horizontal
+            leftRow.alignment = .centerY
+            leftRow.spacing = 7
+            leftRow.translatesAutoresizingMaskIntoConstraints = false
 
-            subMetaRightField.font = NSFont.monospacedDigitSystemFont(ofSize: 9.8, weight: .semibold)
-            subMetaRightField.textColor = NSColor(srgbRed: 0.20, green: 0.29, blue: 0.40, alpha: 1.0)
-            subMetaRightField.alignment = .right
-            subMetaRightField.setContentCompressionResistancePriority(.required, for: .horizontal)
+            let rightRow = NSStackView(views: [costField, timerField, goBadgeField])
+            rightRow.orientation = .horizontal
+            rightRow.alignment = .centerY
+            rightRow.spacing = 7
+            rightRow.translatesAutoresizingMaskIntoConstraints = false
+            rightRow.setContentHuggingPriority(.required, for: .horizontal)
+            rightRow.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-            let leadSpacer = NSView()
-            leadSpacer.translatesAutoresizingMaskIntoConstraints = false
-            leadSpacer.widthAnchor.constraint(equalToConstant: 16).isActive = true
-
-            let bottomLine = NSStackView(views: [leadSpacer, subMetaLeftField, NSView(), subMetaRightField])
-            bottomLine.orientation = .horizontal
-            bottomLine.alignment = .centerY
-            bottomLine.spacing = 6
-
-            let vStack = NSStackView(views: [topLine, bottomLine])
-            vStack.orientation = .vertical
-            vStack.alignment = .width
-            vStack.spacing = 2.5
-            vStack.edgeInsets = NSEdgeInsets(top: 6, left: 9, bottom: 5.5, right: 9)
-            vStack.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(vStack)
+            addSubview(leftRow)
+            addSubview(rightRow)
 
             NSLayoutConstraint.activate([
-                vStack.topAnchor.constraint(equalTo: topAnchor),
-                vStack.leadingAnchor.constraint(equalTo: leadingAnchor),
-                vStack.trailingAnchor.constraint(equalTo: trailingAnchor),
-                vStack.bottomAnchor.constraint(equalTo: bottomAnchor)
+                heightAnchor.constraint(equalToConstant: 34),
+                timerField.widthAnchor.constraint(greaterThanOrEqualToConstant: 36),
+
+                leftRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+                leftRow.centerYAnchor.constraint(equalTo: centerYAnchor),
+                leftRow.trailingAnchor.constraint(lessThanOrEqualTo: rightRow.leadingAnchor, constant: -10),
+
+                rightRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+                rightRow.centerYAnchor.constraint(equalTo: centerYAnchor)
             ])
         }
     }
@@ -1024,8 +1385,27 @@ final class SessionRowView: NSControl {
         fatalError("init(coder:) has not been implemented")
     }
 
-    @objc private func handleCollapseButtonTap() {
-        onToggleCollapse?()
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = trackingRef { removeTrackingArea(t) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingRef = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        applySurfaceAppearance()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        applySurfaceAppearance()
     }
 
     func configureMaster(
@@ -1033,281 +1413,1016 @@ final class SessionRowView: NSControl {
         enteredAtMs: Int64,
         sprite: NSImage,
         title: String,
+        costText: String,
         nowMs: Int64,
-        metaSummaryLeft: String,
-        terminalBadge: String,
         subTaskCount: Int,
-        isCollapsed: Bool,
+        isExpanded: Bool,
         isAutoFocused: Bool,
-        tooltipText: String
+        dimmedCompleted: Bool
     ) {
         self.boundState = state
         self.boundEnteredAtMs = enteredAtMs
         self.currentIsAutoFocused = isAutoFocused
+        self.toolTip = nil
 
         iconView.image = sprite
-        self.toolTip = tooltipText
-
-        titleField.font = NSFont.systemFont(ofSize: 12.3, weight: isAutoFocused ? .bold : .semibold)
-        titleField.textColor = isAutoFocused
-            ? NSColor(srgbRed: 0.02, green: 0.22, blue: 0.36, alpha: 1.0)
-            : NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0)
+        titleField.font = NSFont.systemFont(ofSize: 12.0, weight: state.isActiveRunning ? .semibold : .regular)
+        titleField.textColor = NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0)
         titleField.stringValue = title
 
-        subMetaLeftField.stringValue = metaSummaryLeft
-        subMetaRightField.stringValue = terminalBadge
+        costField.stringValue = costText
+        costField.isHidden = costText.isEmpty
 
-        if let cBtn = collapseBtn {
+        if let chip = expandChip {
             if subTaskCount > 0 {
-                cBtn.isHidden = false
-                cBtn.title = isCollapsed ? "▸ \(subTaskCount)子" : "▾ \(subTaskCount)子"
+                chip.isHidden = false
+                chip.text = isExpanded ? "▾ \(subTaskCount)" : "▸ \(subTaskCount)"
             } else {
-                cBtn.isHidden = true
+                chip.isHidden = true
             }
         }
 
+        alphaValue = dimmedCompleted ? 0.52 : 1.0
         updateLiveTimerText(nowMs: nowMs)
-        applyFocusAppearance(isAutoFocused: isAutoFocused)
+        applySurfaceAppearance()
     }
 
     func configureSubTask(
         state: AgentRunState,
         enteredAtMs: Int64,
-        sprite: NSImage,
         roleLabel: String,
         title: String,
-        nowMs: Int64,
-        durationSuffix: String?,
-        costSuffix: String?,
-        cacheBadgeSuffix: String?,
-        distinctTerminalBadge: String?,
-        isAutoFocused: Bool,
-        tooltipText: String
+        rightSummaryText: String,
+        dimmedCompleted: Bool
     ) {
         self.boundState = state
         self.boundEnteredAtMs = enteredAtMs
-        self.cachedDurationSuffix = durationSuffix
-        self.cachedCostSuffix = costSuffix
-        self.cachedCacheBadgeSuffix = cacheBadgeSuffix
-        self.cachedTerminalBadge = distinctTerminalBadge
-        self.currentIsAutoFocused = isAutoFocused
-
-        iconView.image = sprite
-        self.toolTip = tooltipText
+        self.toolTip = nil
 
         roleBadgeField.stringValue = roleLabel
-        titleField.font = NSFont.systemFont(ofSize: 11.3, weight: isAutoFocused ? .semibold : .regular)
-        titleField.textColor = isAutoFocused
-            ? NSColor(srgbRed: 0.02, green: 0.22, blue: 0.36, alpha: 1.0)
-            : NSColor(srgbRed: 0.10, green: 0.15, blue: 0.24, alpha: 1.0)
+        titleField.font = NSFont.systemFont(ofSize: 11.2, weight: .regular)
+        titleField.textColor = NSColor(srgbRed: 0.25, green: 0.32, blue: 0.42, alpha: 1.0)
         titleField.stringValue = title
+        costField.stringValue = rightSummaryText
 
-        updateLiveTimerText(nowMs: nowMs)
-        applyFocusAppearance(isAutoFocused: isAutoFocused)
+        alphaValue = dimmedCompleted ? 0.55 : 0.94
+        applySurfaceAppearance()
     }
 
     func updateSpriteOnly(_ image: NSImage) {
-        iconView.image = image
+        if !isSubTaskRow {
+            iconView.image = image
+        }
     }
 
     func updateLiveTimerText(nowMs: Int64) {
-        let timerText = TimeFormatters.liveStateTimerLabel(
-            state: boundState,
-            enteredAtMs: boundEnteredAtMs,
-            nowMs: nowMs
-        )
-
-        if !isSubTaskRow {
-            liveTimerField.attributedStringValue = NSAttributedString(
-                string: timerText,
-                attributes: [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 10.6, weight: .semibold),
-                    .foregroundColor: boundState.accentColor
-                ]
-            )
-            return
+        guard !isSubTaskRow else { return }
+        if boundState.isActiveRunning {
+            timerField.stringValue = TimeFormatters.compactTimerOnly(enteredAtMs: boundEnteredAtMs, nowMs: nowMs)
+            timerField.textColor = boundState.accentColor
+        } else if boundState == .error {
+            timerField.stringValue = "出错"
+            timerField.textColor = boundState.accentColor
+        } else {
+            timerField.stringValue = "完成"
+            timerField.textColor = NSColor(srgbRed: 0.56, green: 0.63, blue: 0.72, alpha: 1.0)
         }
-
-        let sepAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 9.2, weight: .regular),
-            .foregroundColor: NSColor(srgbRed: 0.62, green: 0.69, blue: 0.77, alpha: 1.0)
-        ]
-
-        let combined = NSMutableAttributedString()
-        if let cost = cachedCostSuffix {
-            combined.append(NSAttributedString(
-                string: cost,
-                attributes: [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 10.0, weight: .medium),
-                    .foregroundColor: NSColor(srgbRed: 0.18, green: 0.26, blue: 0.36, alpha: 1.0)
-                ]
-            ))
-            combined.append(NSAttributedString(string: " · ", attributes: sepAttrs))
-        }
-        if let cacheBadge = cachedCacheBadgeSuffix {
-            combined.append(NSAttributedString(
-                string: cacheBadge,
-                attributes: [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 9.6, weight: .medium),
-                    .foregroundColor: NSColor(srgbRed: 0.02, green: 0.48, blue: 0.40, alpha: 1.0)
-                ]
-            ))
-            combined.append(NSAttributedString(string: " · ", attributes: sepAttrs))
-        }
-        if let dur = cachedDurationSuffix {
-            combined.append(NSAttributedString(
-                string: dur,
-                attributes: [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 9.6, weight: .regular),
-                    .foregroundColor: NSColor(srgbRed: 0.40, green: 0.47, blue: 0.56, alpha: 1.0)
-                ]
-            ))
-            combined.append(NSAttributedString(string: " · ", attributes: sepAttrs))
-        }
-        combined.append(NSAttributedString(
-            string: timerText,
-            attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 10.2, weight: .semibold),
-                .foregroundColor: boundState.accentColor
-            ]
-        ))
-        if let termBadge = cachedTerminalBadge, !termBadge.isEmpty {
-            combined.append(NSAttributedString(string: " · ", attributes: sepAttrs))
-            combined.append(NSAttributedString(
-                string: termBadge,
-                attributes: [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 9.6, weight: .medium),
-                    .foregroundColor: NSColor(srgbRed: 0.26, green: 0.35, blue: 0.46, alpha: 1.0)
-                ]
-            ))
-        }
-        rightMetaField.attributedStringValue = combined
     }
 
-    private func applyFocusAppearance(isAutoFocused: Bool) {
-        guard let layer = self.layer else { return }
-        layer.removeAnimation(forKey: "focusBorderBlink")
+    private func applySurfaceAppearance() {
+        goBadgeField.textColor = isHovered
+            ? NSColor(srgbRed: 0.01, green: 0.52, blue: 0.78, alpha: 1.0)
+            : NSColor(srgbRed: 0.72, green: 0.78, blue: 0.85, alpha: 1.0)
 
-        if isAutoFocused {
-            layer.backgroundColor = NSColor(srgbRed: 0.915, green: 0.968, blue: 1.0, alpha: 0.98).cgColor
-            layer.borderWidth = 1.3
-            let strong = NSColor(srgbRed: 0.01, green: 0.52, blue: 0.78, alpha: 0.92).cgColor
-            let faint = NSColor(srgbRed: 0.06, green: 0.65, blue: 0.91, alpha: 0.22).cgColor
-            layer.borderColor = strong
-
-            if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-                let anim = CABasicAnimation(keyPath: "borderColor")
-                anim.fromValue = strong
-                anim.toValue = faint
-                anim.duration = 0.68
-                anim.autoreverses = true
-                anim.repeatCount = .infinity
-                anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                layer.add(anim, forKey: "focusBorderBlink")
-            }
+        if currentIsAutoFocused && !isSubTaskRow {
+            layer?.borderColor = NSColor(srgbRed: 0.73, green: 0.90, blue: 0.99, alpha: 0.90).cgColor
+            layer?.backgroundColor = isHovered
+                ? NSColor(srgbRed: 0.91, green: 0.96, blue: 1.00, alpha: 1.0).cgColor
+                : NSColor(srgbRed: 0.945, green: 0.978, blue: 1.00, alpha: 0.85).cgColor
         } else {
-            layer.backgroundColor = isSubTaskRow
-                ? NSColor(srgbRed: 0.968, green: 0.982, blue: 0.996, alpha: 0.96).cgColor
-                : NSColor(srgbRed: 1.0, green: 1.0, blue: 1.0, alpha: 0.98).cgColor
-            layer.borderWidth = 1.0
-            layer.borderColor = isSubTaskRow
-                ? NSColor(srgbRed: 0.86, green: 0.91, blue: 0.96, alpha: 1.0).cgColor
-                : NSColor(srgbRed: 0.82, green: 0.88, blue: 0.95, alpha: 1.0).cgColor
+            layer?.borderColor = NSColor.clear.cgColor
+            layer?.backgroundColor = isHovered
+                ? NSColor(srgbRed: 0.962, green: 0.975, blue: 0.990, alpha: 1.0).cgColor
+                : NSColor.clear.cgColor
         }
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, alphaValue > 0.01 else { return nil }
+        guard super.hitTest(point) != nil else { return nil }
+        if let chip = expandChip, !chip.isHidden, let sv = superview {
+            let localPt = convert(point, from: sv)
+            let chipPt = chip.convert(localPt, from: self)
+            if chip.bounds.insetBy(dx: -4, dy: -4).contains(chipPt) {
+                return chip
+            }
+        }
+        return self
     }
 
     override func mouseDown(with event: NSEvent) {
-        let pt = convert(event.locationInWindow, from: nil)
-        if let cBtn = collapseBtn, !cBtn.isHidden {
-            let btnPt = cBtn.convert(pt, from: self)
-            if cBtn.bounds.insetBy(dx: -4, dy: -4).contains(btnPt) {
-                super.mouseDown(with: event)
-                return
-            }
-        }
-        layer?.backgroundColor = NSColor(srgbRed: 0.89, green: 0.96, blue: 1.0, alpha: 0.98).cgColor
+        layer?.backgroundColor = NSColor(srgbRed: 0.90, green: 0.95, blue: 0.99, alpha: 1.0).cgColor
     }
 
     override func mouseUp(with event: NSEvent) {
-        applyFocusAppearance(isAutoFocused: currentIsAutoFocused)
+        applySurfaceAppearance()
         let pt = convert(event.locationInWindow, from: nil)
-        if let cBtn = collapseBtn, !cBtn.isHidden {
-            let btnPt = cBtn.convert(pt, from: self)
-            if cBtn.bounds.insetBy(dx: -4, dy: -4).contains(btnPt) {
-                onToggleCollapse?()
-                return
+        if bounds.contains(pt), let action = onClick {
+            DispatchQueue.main.async {
+                action()
             }
-        }
-        if bounds.contains(pt) {
-            onClick?()
         }
     }
 }
 
-// MARK: - Bright Minimalist Status Bar Popover Controller
+// MARK: - In-Popover Scrollable Rounded Dropdown Card & Deterministic Overlay Container
+
+private struct DropdownMenuItemSpec {
+    enum Style {
+        case standard
+        case selected
+        case accentAction
+        case mutedBackHeader
+    }
+    let title: String
+    let rightDetail: String
+    let rightAccent: Bool
+    let style: Style
+    let action: () -> Void
+}
+
+private final class DropdownMenuRowControl: NSView {
+    private let spec: DropdownMenuItemSpec
+    private let leftLabel = NSTextField(labelWithString: "")
+    private let rightLabel = NSTextField(labelWithString: "")
+    private var isHovered = false
+    private var isPressed = false
+    private var trackingRef: NSTrackingArea?
+
+    init(spec: DropdownMenuItemSpec, frame: NSRect) {
+        self.spec = spec
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 7.5
+
+        leftLabel.stringValue = spec.title
+        leftLabel.lineBreakMode = .byTruncatingMiddle
+        leftLabel.usesSingleLineMode = true
+        leftLabel.translatesAutoresizingMaskIntoConstraints = false
+        leftLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        rightLabel.stringValue = spec.rightDetail
+        rightLabel.alignment = .right
+        rightLabel.isHidden = spec.rightDetail.isEmpty
+        rightLabel.usesSingleLineMode = true
+        rightLabel.translatesAutoresizingMaskIntoConstraints = false
+        rightLabel.setContentHuggingPriority(.required, for: .horizontal)
+        rightLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        addSubview(leftLabel)
+        addSubview(rightLabel)
+
+        if spec.rightDetail.isEmpty {
+            NSLayoutConstraint.activate([
+                leftLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+                leftLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+                leftLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
+            ])
+        } else {
+            NSLayoutConstraint.activate([
+                leftLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+                leftLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+                leftLabel.trailingAnchor.constraint(lessThanOrEqualTo: rightLabel.leadingAnchor, constant: -8),
+
+                rightLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+                rightLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
+            ])
+        }
+        updateStyle()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, alphaValue > 0.01 else { return nil }
+        return super.hitTest(point) != nil ? self : nil
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = trackingRef { removeTrackingArea(t) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingRef = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateStyle()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        isPressed = false
+        updateStyle()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        isPressed = true
+        updateStyle()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let wasPressed = isPressed
+        isPressed = false
+        updateStyle()
+        let pt = convert(event.locationInWindow, from: nil)
+        if wasPressed || bounds.insetBy(dx: -2, dy: -2).contains(pt) {
+            if bounds.insetBy(dx: -4, dy: -4).contains(pt) {
+                let action = spec.action
+                DispatchQueue.main.async {
+                    action()
+                }
+            }
+        }
+    }
+
+    private func updateStyle() {
+        if isPressed {
+            layer?.backgroundColor = NSColor(srgbRed: 0.84, green: 0.93, blue: 1.00, alpha: 1.0).cgColor
+        } else {
+            switch spec.style {
+            case .selected:
+                layer?.backgroundColor = isHovered
+                    ? NSColor(srgbRed: 0.89, green: 0.95, blue: 1.00, alpha: 1.0).cgColor
+                    : NSColor(srgbRed: 0.935, green: 0.972, blue: 1.00, alpha: 1.0).cgColor
+            case .accentAction:
+                layer?.backgroundColor = isHovered
+                    ? NSColor(srgbRed: 0.935, green: 0.972, blue: 1.00, alpha: 1.0).cgColor
+                    : NSColor.clear.cgColor
+            case .mutedBackHeader:
+                layer?.backgroundColor = isHovered
+                    ? NSColor(srgbRed: 0.935, green: 0.965, blue: 0.995, alpha: 1.0).cgColor
+                    : NSColor(srgbRed: 0.968, green: 0.980, blue: 0.994, alpha: 1.0).cgColor
+            case .standard:
+                layer?.backgroundColor = isHovered
+                    ? NSColor(srgbRed: 0.955, green: 0.972, blue: 0.992, alpha: 1.0).cgColor
+                    : NSColor.clear.cgColor
+            }
+        }
+
+        switch spec.style {
+        case .selected:
+            leftLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+            leftLabel.textColor = NSColor(srgbRed: 0.02, green: 0.36, blue: 0.56, alpha: 1.0)
+            rightLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .semibold)
+            rightLabel.textColor = NSColor(srgbRed: 0.02, green: 0.36, blue: 0.56, alpha: 1.0)
+        case .accentAction:
+            leftLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+            leftLabel.textColor = NSColor(srgbRed: 0.01, green: 0.44, blue: 0.68, alpha: 1.0)
+            rightLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.8, weight: .semibold)
+            rightLabel.textColor = NSColor(srgbRed: 0.01, green: 0.44, blue: 0.68, alpha: 1.0)
+        case .mutedBackHeader:
+            leftLabel.font = NSFont.systemFont(ofSize: 11.4, weight: .semibold)
+            leftLabel.textColor = NSColor(srgbRed: 0.02, green: 0.44, blue: 0.68, alpha: 1.0)
+            rightLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .medium)
+            rightLabel.textColor = NSColor(srgbRed: 0.45, green: 0.53, blue: 0.62, alpha: 1.0)
+        case .standard:
+            leftLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .regular)
+            leftLabel.textColor = NSColor(srgbRed: 0.14, green: 0.21, blue: 0.31, alpha: 1.0)
+            rightLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.8, weight: spec.rightAccent ? .semibold : .medium)
+            rightLabel.textColor = spec.rightAccent
+                ? NSColor(srgbRed: 0.01, green: 0.44, blue: 0.68, alpha: 1.0)
+                : NSColor(srgbRed: 0.45, green: 0.53, blue: 0.62, alpha: 1.0)
+        }
+    }
+}
+
+private final class FloatingDropdownCardView: NSView {
+    private let headerContainer = NSView()
+    private let headerSeparator = NSView()
+    private let scrollView = NSScrollView()
+    private let docView = FlippedDocumentView()
+
+    private var widthConstraint: NSLayoutConstraint?
+    private var heightConstraint: NSLayoutConstraint?
+    private var scrollTopConstraint: NSLayoutConstraint?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 12.5
+        layer?.backgroundColor = NSColor.white.cgColor
+        layer?.borderWidth = 1.0
+        layer?.borderColor = NSColor(srgbRed: 0.82, green: 0.87, blue: 0.93, alpha: 1.0).cgColor
+        layer?.shadowColor = NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0).cgColor
+        layer?.shadowOpacity = 0.16
+        layer?.shadowRadius = 18
+        layer?.shadowOffset = CGSize(width: 0, height: -6)
+
+        headerContainer.translatesAutoresizingMaskIntoConstraints = false
+        headerContainer.isHidden = true
+        addSubview(headerContainer)
+
+        headerSeparator.wantsLayer = true
+        headerSeparator.layer?.backgroundColor = NSColor(srgbRed: 0.90, green: 0.93, blue: 0.97, alpha: 1.0).cgColor
+        headerSeparator.translatesAutoresizingMaskIntoConstraints = false
+        headerSeparator.isHidden = true
+        addSubview(headerSeparator)
+
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = docView
+        addSubview(scrollView)
+
+        let wC = widthAnchor.constraint(equalToConstant: 268)
+        let hC = heightAnchor.constraint(equalToConstant: 120)
+        let topC = scrollView.topAnchor.constraint(equalTo: topAnchor)
+        self.widthConstraint = wC
+        self.heightConstraint = hC
+        self.scrollTopConstraint = topC
+
+        NSLayoutConstraint.activate([
+            wC,
+            hC,
+            headerContainer.topAnchor.constraint(equalTo: topAnchor, constant: 5),
+            headerContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+            headerContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            headerContainer.heightAnchor.constraint(equalToConstant: 30),
+
+            headerSeparator.topAnchor.constraint(equalTo: headerContainer.bottomAnchor, constant: 4),
+            headerSeparator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            headerSeparator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            headerSeparator.heightAnchor.constraint(equalToConstant: 1),
+
+            topC,
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) {}
+
+    /// Deterministic frame layout inside `FlippedDocumentView` — supports 5, 10, or 30+ console items with smooth native scrolling and zero width collapse.
+    func rebuild(
+        sections: [[DropdownMenuItemSpec]],
+        cardWidth: CGFloat,
+        maxTotalHeight: CGFloat = 386,
+        pinnedBackHeader: DropdownMenuItemSpec? = nil
+    ) {
+        for sub in headerContainer.subviews { sub.removeFromSuperview() }
+        for sub in docView.subviews { sub.removeFromSuperview() }
+
+        let rowWidth = max(140, cardWidth - 10)
+        let rowHeight: CGFloat = 29
+
+        var pinnedHeaderOffset: CGFloat = 0
+        if let backSpec = pinnedBackHeader {
+            headerContainer.isHidden = false
+            headerSeparator.isHidden = false
+            let backRow = DropdownMenuRowControl(
+                spec: backSpec,
+                frame: NSRect(x: 0, y: 0, width: rowWidth, height: 30)
+            )
+            backRow.autoresizingMask = [.width]
+            headerContainer.addSubview(backRow)
+            pinnedHeaderOffset = 40
+        } else {
+            headerContainer.isHidden = true
+            headerSeparator.isHidden = true
+            pinnedHeaderOffset = 0
+        }
+
+        scrollTopConstraint?.constant = pinnedHeaderOffset
+
+        let nonEmptySections = sections.filter { !$0.isEmpty }
+        var cursorY: CGFloat = 5
+
+        for (sIdx, section) in nonEmptySections.enumerated() {
+            if sIdx > 0 {
+                cursorY += 3
+                let sep = NSView(frame: NSRect(x: 11, y: cursorY, width: max(80, cardWidth - 22), height: 1))
+                sep.wantsLayer = true
+                sep.layer?.backgroundColor = NSColor(srgbRed: 0.90, green: 0.93, blue: 0.97, alpha: 1.0).cgColor
+                docView.addSubview(sep)
+                cursorY += 4
+            }
+            for (rIdx, item) in section.enumerated() {
+                if rIdx > 0 {
+                    cursorY += 2
+                }
+                let row = DropdownMenuRowControl(
+                    spec: item,
+                    frame: NSRect(x: 5, y: cursorY, width: rowWidth, height: rowHeight)
+                )
+                docView.addSubview(row)
+                cursorY += rowHeight
+            }
+        }
+
+        cursorY += 5
+        docView.frame = NSRect(x: 0, y: 0, width: cardWidth, height: cursorY)
+
+        let totalHeight = min(maxTotalHeight, pinnedHeaderOffset + cursorY)
+        widthConstraint?.constant = cardWidth
+        heightConstraint?.constant = totalHeight
+        scrollView.contentView.scroll(to: .zero)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+}
+
+/// Hosts a modal or dropdown `contentCard` directly inside a full-Popover overlay so `hitTest(_:)` ALWAYS routes clicks inside `contentCard` to its interactive subviews first, and dismisses cleanly when clicking outside.
+private final class ModalOverlayContainerView: NSView {
+    let contentCard: NSView
+    var onTapOutside: (() -> Void)?
+
+    init(contentCard: NSView, dimmed: Bool) {
+        self.contentCard = contentCard
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = dimmed
+            ? NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 0.30).cgColor
+            : NSColor.clear.cgColor
+
+        contentCard.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(contentCard)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, alphaValue > 0.01 else { return nil }
+        let localPt = superview != nil ? convert(point, from: superview) : point
+        guard bounds.contains(localPt) else { return nil }
+
+        // Route to contentCard & its children FIRST — eliminates all sibling z-order issues inside NSVisualEffectView!
+        if !contentCard.isHidden, contentCard.alphaValue > 0.01 {
+            if let hitChild = contentCard.hitTest(localPt) {
+                return hitChild
+            }
+            if contentCard.frame.contains(localPt) {
+                return contentCard
+            }
+        }
+        return self
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+
+    override func mouseUp(with event: NSEvent) {
+        let localPt = convert(event.locationInWindow, from: nil)
+        if !contentCard.frame.contains(localPt), bounds.contains(localPt) {
+            if let outside = onTapOutside {
+                DispatchQueue.main.async {
+                    outside()
+                }
+            }
+        }
+    }
+}
+
+// MARK: - In-Popover Native API-Key Manager Card (Embedded Inside NSPopover · Zero Window Loss)
+
+private final class PasteableTextField: NSTextField {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown {
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if flags == .command, let chars = event.charactersIgnoringModifiers?.lowercased() {
+                switch chars {
+                case "v":
+                    if NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: self) { return true }
+                case "c":
+                    if NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: self) { return true }
+                case "x":
+                    if NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: self) { return true }
+                case "a":
+                    if NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: self) { return true }
+                case "z":
+                    if NSApp.sendAction(Selector(("undo:")), to: nil, from: self) { return true }
+                default:
+                    break
+                }
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
+private final class APIKeyManagerPanelContentView: NSView {
+    var onSaveProfile: ((String, String, String) -> Void)?
+    var onSelectScope: ((String) -> Void)?
+    var onDeleteProfile: ((String) -> Void)?
+    var onRescanOpenCode: (() -> Void)?
+    var onClose: (() -> Void)?
+
+    private let listScroll = NSScrollView()
+    private let docView = FlippedDocumentView()
+    let nameField = PasteableTextField(frame: .zero)
+    let secretField = PasteableTextField(frame: .zero)
+    let keywordField = PasteableTextField(frame: .zero)
+    private let formTitleLabel = NSTextField(labelWithString: "手动补充或覆盖分组（同名自动覆盖）")
+    private let feedbackLabel = NSTextField(labelWithString: "")
+    private var cachedProfiles: [APIKeyProfile] = []
+
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) {}
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 15
+        layer?.backgroundColor = NSColor.white.cgColor
+        layer?.borderWidth = 1.0
+        layer?.borderColor = NSColor(srgbRed: 0.78, green: 0.85, blue: 0.93, alpha: 1.0).cgColor
+        layer?.shadowColor = NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0).cgColor
+        layer?.shadowOpacity = 0.22
+        layer?.shadowRadius = 20
+        layer?.shadowOffset = CGSize(width: 0, height: -8)
+
+        let titleLabel = NSTextField(labelWithString: "API-Key 自动读取与多分组管理")
+        titleLabel.font = NSFont.systemFont(ofSize: 13.5, weight: .bold)
+        titleLabel.textColor = NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let rescanBtn = CapsuleControlButton(title: "↻ 重新读取DB", fontSize: 10.8)
+        rescanBtn.translatesAutoresizingMaskIntoConstraints = false
+        rescanBtn.onPress = { [weak self] in
+            self?.handleRescanClick()
+        }
+
+        let closeBtn = CapsuleControlButton(title: "✕", fontSize: 11.2, fixedWidth: 28)
+        closeBtn.translatesAutoresizingMaskIntoConstraints = false
+        closeBtn.onPress = { [weak self] in
+            self?.handleCancelClick()
+        }
+
+        let headerBar = NSView()
+        headerBar.translatesAutoresizingMaskIntoConstraints = false
+        headerBar.addSubview(titleLabel)
+        headerBar.addSubview(rescanBtn)
+        headerBar.addSubview(closeBtn)
+
+        let subtitleLabel = NSTextField(
+            wrappingLabelWithString: "已自动只读提取 opencode.db / auth.json / opencode.json 中的 Key 并直连 api.deepseek.com 查询实时余额；也可手动新增多组 Key。"
+        )
+        subtitleLabel.font = NSFont.systemFont(ofSize: 11.0, weight: .regular)
+        subtitleLabel.textColor = NSColor(srgbRed: 0.40, green: 0.47, blue: 0.57, alpha: 1.0)
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let existingHeader = NSTextField(labelWithString: "当前可用 Key 与自动识别通道")
+        existingHeader.font = NSFont.systemFont(ofSize: 11.0, weight: .semibold)
+        existingHeader.textColor = NSColor(srgbRed: 0.26, green: 0.34, blue: 0.44, alpha: 1.0)
+        existingHeader.translatesAutoresizingMaskIntoConstraints = false
+
+        listScroll.drawsBackground = false
+        listScroll.hasVerticalScroller = true
+        listScroll.autohidesScrollers = true
+        listScroll.wantsLayer = true
+        listScroll.layer?.cornerRadius = 9
+        listScroll.layer?.backgroundColor = NSColor(srgbRed: 0.968, green: 0.980, blue: 0.994, alpha: 1.0).cgColor
+        listScroll.layer?.borderWidth = 1.0
+        listScroll.layer?.borderColor = NSColor(srgbRed: 0.87, green: 0.91, blue: 0.96, alpha: 1.0).cgColor
+        listScroll.translatesAutoresizingMaskIntoConstraints = false
+        listScroll.documentView = docView
+
+        formTitleLabel.font = NSFont.systemFont(ofSize: 11.0, weight: .semibold)
+        formTitleLabel.textColor = NSColor(srgbRed: 0.26, green: 0.34, blue: 0.44, alpha: 1.0)
+        formTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        configureInput(nameField, placeholder: "分组名称（如：DeepSeek 官方、个人备用Key）", monospaced: false)
+        configureInput(secretField, placeholder: "sk-...（支持 ⌘V 或右侧一键粘贴，用于实时查余额）", monospaced: true)
+        configureInput(keywordField, placeholder: "工作目录或通道匹配词（可选，如 client-b 自动分账）", monospaced: false)
+
+        let pasteBtn = CapsuleControlButton(title: "粘贴", fontSize: 11.0)
+        pasteBtn.translatesAutoresizingMaskIntoConstraints = false
+        pasteBtn.onPress = { [weak self] in
+            self?.handlePasteClipboard()
+        }
+
+        let secretRow = NSView()
+        secretRow.translatesAutoresizingMaskIntoConstraints = false
+        secretRow.addSubview(secretField)
+        secretRow.addSubview(pasteBtn)
+
+        feedbackLabel.font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
+        feedbackLabel.textColor = NSColor(srgbRed: 0.02, green: 0.48, blue: 0.72, alpha: 1.0)
+        feedbackLabel.lineBreakMode = .byTruncatingTail
+        feedbackLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let cancelBtn = CapsuleControlButton(title: "取消", fontSize: 11.2)
+        cancelBtn.translatesAutoresizingMaskIntoConstraints = false
+        cancelBtn.onPress = { [weak self] in
+            self?.handleCancelClick()
+        }
+
+        let saveBtn = CapsuleControlButton(title: "保存并启用", fontSize: 11.2)
+        saveBtn.isTintedAccent = true
+        saveBtn.translatesAutoresizingMaskIntoConstraints = false
+        saveBtn.onPress = { [weak self] in
+            self?.submitCurrentForm()
+        }
+
+        let actionRow = NSView()
+        actionRow.translatesAutoresizingMaskIntoConstraints = false
+        actionRow.addSubview(feedbackLabel)
+        actionRow.addSubview(cancelBtn)
+        actionRow.addSubview(saveBtn)
+
+        addSubview(headerBar)
+        addSubview(subtitleLabel)
+        addSubview(existingHeader)
+        addSubview(listScroll)
+        addSubview(formTitleLabel)
+        addSubview(nameField)
+        addSubview(secretRow)
+        addSubview(keywordField)
+        addSubview(actionRow)
+
+        NSLayoutConstraint.activate([
+            headerBar.topAnchor.constraint(equalTo: topAnchor, constant: 15),
+            headerBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            headerBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            headerBar.heightAnchor.constraint(equalToConstant: 28),
+
+            titleLabel.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            closeBtn.trailingAnchor.constraint(equalTo: headerBar.trailingAnchor),
+            closeBtn.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            rescanBtn.trailingAnchor.constraint(equalTo: closeBtn.leadingAnchor, constant: -6),
+            rescanBtn.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+
+            subtitleLabel.topAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: 7),
+            subtitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            subtitleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+
+            existingHeader.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 9),
+            existingHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            existingHeader.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+
+            listScroll.topAnchor.constraint(equalTo: existingHeader.bottomAnchor, constant: 5),
+            listScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            listScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            listScroll.heightAnchor.constraint(equalToConstant: 120),
+
+            formTitleLabel.topAnchor.constraint(equalTo: listScroll.bottomAnchor, constant: 10),
+            formTitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            formTitleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+
+            nameField.topAnchor.constraint(equalTo: formTitleLabel.bottomAnchor, constant: 6),
+            nameField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            nameField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+
+            secretRow.topAnchor.constraint(equalTo: nameField.bottomAnchor, constant: 7),
+            secretRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            secretRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            secretRow.heightAnchor.constraint(equalToConstant: 28),
+            secretField.leadingAnchor.constraint(equalTo: secretRow.leadingAnchor),
+            secretField.centerYAnchor.constraint(equalTo: secretRow.centerYAnchor),
+            secretField.trailingAnchor.constraint(equalTo: pasteBtn.leadingAnchor, constant: -6),
+            pasteBtn.trailingAnchor.constraint(equalTo: secretRow.trailingAnchor),
+            pasteBtn.centerYAnchor.constraint(equalTo: secretRow.centerYAnchor),
+
+            keywordField.topAnchor.constraint(equalTo: secretRow.bottomAnchor, constant: 7),
+            keywordField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            keywordField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+
+            actionRow.topAnchor.constraint(equalTo: keywordField.bottomAnchor, constant: 11),
+            actionRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            actionRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            actionRow.heightAnchor.constraint(equalToConstant: 28),
+            actionRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -15),
+
+            feedbackLabel.leadingAnchor.constraint(equalTo: actionRow.leadingAnchor),
+            feedbackLabel.centerYAnchor.constraint(equalTo: actionRow.centerYAnchor),
+            feedbackLabel.trailingAnchor.constraint(lessThanOrEqualTo: cancelBtn.leadingAnchor, constant: -8),
+            saveBtn.trailingAnchor.constraint(equalTo: actionRow.trailingAnchor),
+            saveBtn.centerYAnchor.constraint(equalTo: actionRow.centerYAnchor),
+            cancelBtn.trailingAnchor.constraint(equalTo: saveBtn.leadingAnchor, constant: -7),
+            cancelBtn.centerYAnchor.constraint(equalTo: actionRow.centerYAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func configureInput(_ tf: PasteableTextField, placeholder: String, monospaced: Bool) {
+        tf.isEditable = true
+        tf.isSelectable = true
+        tf.isBezeled = true
+        tf.bezelStyle = .roundedBezel
+        tf.drawsBackground = true
+        tf.backgroundColor = .white
+        tf.textColor = NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0)
+        tf.placeholderString = placeholder
+        tf.font = monospaced
+            ? NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+            : NSFont.systemFont(ofSize: 12.0, weight: .regular)
+        tf.focusRingType = .exterior
+        tf.lineBreakMode = .byTruncatingMiddle
+        tf.usesSingleLineMode = true
+        tf.translatesAutoresizingMaskIntoConstraints = false
+        tf.heightAnchor.constraint(equalToConstant: 26).isActive = true
+    }
+
+    func reloadProfiles(_ profiles: [APIKeyProfile], selectedScopeId: String, resetInputs: Bool) {
+        for sub in docView.subviews { sub.removeFromSuperview() }
+
+        let innerW: CGFloat = 396 - 12
+        var cursorY: CGFloat = 5
+
+        for profile in profiles {
+            let row = NSView(frame: NSRect(x: 6, y: cursorY, width: innerW, height: 30))
+            row.wantsLayer = true
+            row.layer?.cornerRadius = 7
+            let isSelected = (profile.id == selectedScopeId)
+            row.layer?.backgroundColor = isSelected
+                ? NSColor(srgbRed: 0.91, green: 0.96, blue: 1.00, alpha: 1.0).cgColor
+                : NSColor.white.cgColor
+            row.layer?.borderWidth = 1.0
+            row.layer?.borderColor = isSelected
+                ? NSColor(srgbRed: 0.68, green: 0.86, blue: 0.98, alpha: 1.0).cgColor
+                : NSColor(srgbRed: 0.89, green: 0.93, blue: 0.97, alpha: 1.0).cgColor
+
+            let sourceTag: String
+            if let src = profile.autoSource, !src.isEmpty {
+                sourceTag = "自动 · \(src)"
+            } else if !profile.directoryKeyword.isEmpty {
+                sourceTag = "目录:\(profile.directoryKeyword)"
+            } else {
+                sourceTag = "手动添加"
+            }
+
+            let label = NSTextField(labelWithString: "\(profile.displayTitle)  ·  \(sourceTag)")
+            label.font = NSFont.systemFont(ofSize: 11.2, weight: isSelected ? .semibold : .medium)
+            label.textColor = isSelected
+                ? NSColor(srgbRed: 0.01, green: 0.43, blue: 0.66, alpha: 1.0)
+                : NSColor(srgbRed: 0.15, green: 0.22, blue: 0.32, alpha: 1.0)
+            label.lineBreakMode = .byTruncatingMiddle
+            label.usesSingleLineMode = true
+            label.translatesAutoresizingMaskIntoConstraints = false
+
+            let pid = profile.id
+            let editChip = SubCountChipControl(frame: .zero)
+            editChip.text = "编辑"
+            editChip.translatesAutoresizingMaskIntoConstraints = false
+            editChip.onTap = { [weak self] in
+                self?.populateEditor(profileId: pid)
+            }
+
+            let useChip = SubCountChipControl(frame: .zero)
+            useChip.text = isSelected ? "当前✓" : "启用"
+            useChip.translatesAutoresizingMaskIntoConstraints = false
+            useChip.onTap = { [weak self] in
+                guard let self, !isSelected else { return }
+                self.window?.endEditing(for: nil)
+                self.onSelectScope?(pid)
+                self.onClose?()
+            }
+
+            let rightButtons = NSStackView(views: [editChip, useChip])
+            rightButtons.orientation = .horizontal
+            rightButtons.alignment = .centerY
+            rightButtons.spacing = 4
+            rightButtons.translatesAutoresizingMaskIntoConstraints = false
+
+            if !profile.isAutoDiscovered {
+                let delChip = SubCountChipControl(frame: .zero)
+                delChip.text = "删除"
+                delChip.translatesAutoresizingMaskIntoConstraints = false
+                delChip.onTap = { [weak self] in
+                    self?.window?.endEditing(for: nil)
+                    self?.onDeleteProfile?(pid)
+                }
+                rightButtons.addArrangedSubview(delChip)
+            }
+
+            row.addSubview(label)
+            row.addSubview(rightButtons)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 8),
+                label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: rightButtons.leadingAnchor, constant: -6),
+                rightButtons.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -6),
+                rightButtons.centerYAnchor.constraint(equalTo: row.centerYAnchor)
+            ])
+
+            docView.addSubview(row)
+            cursorY += 34
+        }
+
+        docView.frame = NSRect(x: 0, y: 0, width: 396, height: max(118, cursorY + 2))
+        cachedProfiles = profiles
+
+        if resetInputs {
+            feedbackLabel.stringValue = profiles.contains(where: { $0.isAutoDiscovered })
+                ? "已自动同步本机 OpenCode 密钥"
+                : ""
+            if profiles.count == 1 && profiles[0].rawApiKey.isEmpty && !profiles[0].isAutoDiscovered {
+                formTitleLabel.stringValue = "完善默认主Key 或输入新名称新增分组"
+                nameField.stringValue = profiles[0].name
+                secretField.stringValue = ""
+                keywordField.stringValue = profiles[0].directoryKeyword
+            } else {
+                formTitleLabel.stringValue = "手动补充或覆盖分组（同名自动覆盖）"
+                nameField.stringValue = ""
+                secretField.stringValue = ""
+                keywordField.stringValue = ""
+            }
+        }
+    }
+
+    var preferredInitialField: NSView {
+        nameField.stringValue.isEmpty ? nameField : secretField
+    }
+
+    private func populateEditor(profileId: String) {
+        window?.endEditing(for: nil)
+        guard let prof = cachedProfiles.first(where: { $0.id == profileId }) else { return }
+        formTitleLabel.stringValue = "正在编辑：\(prof.name)"
+        nameField.stringValue = prof.name
+        secretField.stringValue = prof.rawApiKey
+        keywordField.stringValue = prof.directoryKeyword
+        window?.makeFirstResponder(secretField)
+    }
+
+    private func handlePasteClipboard() {
+        window?.endEditing(for: nil)
+        if let str = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !str.isEmpty {
+            secretField.stringValue = str
+            if nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                nameField.stringValue = cachedProfiles.isEmpty ? "DeepSeek 官方" : "备用Key-\(cachedProfiles.count + 1)"
+            }
+            feedbackLabel.stringValue = "已粘贴 (\(APIKeyProfile.makeMasked(str)))"
+            window?.makeFirstResponder(secretField)
+        } else {
+            feedbackLabel.stringValue = "剪贴板暂无文本"
+        }
+    }
+
+    private func handleRescanClick() {
+        feedbackLabel.stringValue = "正在重新扫描 opencode.db / auth.json…"
+        onRescanOpenCode?()
+    }
+
+    private func handleCancelClick() {
+        window?.endEditing(for: nil)
+        onClose?()
+    }
+
+    func submitCurrentForm() {
+        window?.endEditing(for: nil)
+        window?.makeFirstResponder(nil)
+        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let secret = secretField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let kw = keywordField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty || !secret.isEmpty || !kw.isEmpty else {
+            feedbackLabel.stringValue = "请填写名称或粘贴 sk-... 密钥"
+            window?.makeFirstResponder(secretField)
+            return
+        }
+        let finalName = name.isEmpty ? "备用Key-\(cachedProfiles.count + 1)" : name
+        onSaveProfile?(finalName, secret, kw)
+    }
+}
+
+// MARK: - Minimalist Status Bar Popover View Controller (1:1 Design Parity)
 
 final class StatusPopoverViewController: NSViewController {
     var onRefreshQuota: (() -> Void)?
-    var onToggleCurrencyMode: (() -> Void)?
-    var onToggleSilentAlert: ((Bool) -> Void)?
+    var onSelectCurrencyMode: ((CurrencyDisplayMode) -> Void)?
+    var onSelectApiKeyScope: ((String) -> Void)?
+    var onSaveApiKeyProfile: ((String, String, String) -> Void)?
+    var onDeleteApiKeyProfile: ((String) -> Void)?
+    var onToggleNotificationsMuted: (() -> Void)?
+    var onTestNotificationSound: (() -> Void)?
     var onToggleAutoFocus: ((Bool) -> Void)?
     var onSelectRealWindowId: ((String?) -> Void)?
-    var onSelectPack: ((String) -> Void)?
+    var onSelectPackId: ((String) -> Void)?
     var onImportCustomPack: ((DeepSeekRolePack) -> Void)?
     var onImportOfficialCSVs: ((OfficialCSVReconciliation) -> Void)?
     var onClearOfficialCSV: (() -> Void)?
-    var onConfigureApiKey: (() -> Void)?
     var onFilterChanged: (() -> Void)?
     var onRequestClosePopover: (() -> Void)?
     var onModalPanelStateChange: ((Bool) -> Void)?
+    var onSelectMenuBarDisplayMode: ((MenuBarDisplayMode) -> Void)?
+    var onSelectFloatingBadgeMode: ((FloatingBadgeMode) -> Void)?
+    var onToggleLaunchAtLogin: ((Bool) -> Void)?
     var onQuitApp: (() -> Void)?
 
-    private let brandIconView = NSImageView()
-    private let headerSpriteView = NSImageView()
-    private let headerStatusLabel = NSTextField(labelWithString: "AgentSpur")
-    private let headerSubLabel = NSTextField(labelWithString: "opencode.db · 今日只读")
-    private var currencyBtn: NSButton!
-    private let quotaInfoLabel = NSTextField(labelWithString: "")
+    // Top Identity & Aligned 28pt Capsule Controls
+    private let brandIconView = RetinaAspectFitImageView(pointSize: 22)
+    private let brandTitleLabel = NSTextField(labelWithString: "AgentSpur")
+    private let statusCapsule = RunningStatusCapsuleView()
 
-    private let autoFocusSwitch = NSSwitch()
-    private let autoFocusPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private var popupWindowIds: [String?] = [nil]
+    private let keySelectorCapsule = CapsuleControlButton(title: "🔑 全部 Key ▾", fontSize: 11.0)
+    private let refreshCapsule = CapsuleControlButton(title: "↻ ⌘R", fontSize: 11.0, monospaced: true)
+    private let settingsCapsule = CapsuleControlButton(title: "设置", symbolName: "gearshape", fixedWidth: 28)
 
-    private var groupSegment: NSSegmentedControl!
-    private let listStack = NSStackView()
-    private var activeRowViews: [SessionRowView] = []
-    private var collapsedMasterIds = Set<String>()
-
+    // Minimalist Hero Spend & Cache Bar Card + Custom Floating Breakdown Card
     private let billingCard = BillingTelemetryCardView()
-    private var csvActionBtn: NSButton!
-    private var csvClearBtn: NSButton!
+    private let hoverBreakdownCard = CostBreakdownHoverCardView()
 
-    private let chartMetricSegment = NSSegmentedControl(
-        labels: ["请求 次/时", "开销 ¥/时", "缓存 %/时"],
-        trackingMode: .selectOne,
-        target: nil,
-        action: nil
-    )
-    private let chartView = NativeTodayHourlyChartView()
+    // Full-Width 4-Column Segmented Filter Bar & Minimalist Accordion List
+    private let filterSegmentBar = SegmentedFilterBarView()
 
-    private let silentSwitch = NSSwitch()
-    private let packPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    // 24H Sparkline Bar Chart
+    private let chartHoverLabel = NSTextField(labelWithString: "00:00 - 24:00 · 悬停看明细")
+    private let sparklineView = SparklineBarChartView()
 
+    // Clean Single-Row Footer Toolbar
+    private let rolePackCapsule = CapsuleControlButton(title: "🐳 深海小鲸 ▾", fontSize: 11.0)
+    private let bellToggleCapsule = CapsuleControlButton(title: "🔔 提醒开启", fontSize: 11.0)
+    private let quitCapsule = CapsuleControlButton(title: "✕ 退出", fontSize: 11.0)
+
+    // In-Popover Scrollable Dropdown Card + Modal Overlay
+    private enum ActiveDropdownKind {
+        case none
+        case keyAndCurrency
+        case settingsGear
+        case consoleSelector
+        case rolePack
+    }
+    private var activeDropdown: ActiveDropdownKind = .none
+    private let dropdownCard = FloatingDropdownCardView()
+    private lazy var dropdownOverlay = ModalOverlayContainerView(contentCard: dropdownCard, dimmed: false)
+    private var dropdownPositionConstraints: [NSLayoutConstraint] = []
+
+    // In-Popover Dimmed Modal Overlay + Embedded API-Key Manager Card (Zero External Window · 100% Reliable)
+    private let apiKeyPanelContent = APIKeyManagerPanelContentView(frame: .zero)
+    private lazy var apiKeyModalOverlay = ModalOverlayContainerView(contentCard: apiKeyPanelContent, dimmed: true)
+
+    // Session list document view (pure Auto Layout, zero NSStackView width drift)
+    private let sessionDocContainer = FlippedDocumentView()
+    private var activeRowViews: [SessionRowView] = []
+    private var expandedMasterIds = Set<String>()
+
+    var isApiKeyModalVisible: Bool {
+        !apiKeyModalOverlay.isHidden
+    }
+
+    // Cached render state
     private var currentFilter: SessionGroupFilter = .all
-    private var lastRenderedSnapshot: OpenCodeDBSnapshot?
+    private var lastSnapshot: OpenCodeDBSnapshot?
+    private var lastApiKeyProfiles: [APIKeyProfile] = []
+    private var lastCurrencyMode: CurrencyDisplayMode = .cny
+    private var lastUsdToCnyRate: Double = 7.12
+    private var lastSelectedKeyScopeId: String = APIKeyProfile.allKeysId
+    private var lastAutoFocusEnabled: Bool = true
+    private var lastSelectedWindowId: String? = nil
+    private var lastCsvReconciliation: OfficialCSVReconciliation?
+    private var lastAllPacks: [DeepSeekRolePack] = DeepSeekRolePack.builtInPacks
+    private var lastActivePackId: String = "pack-gin-droplet"
+    private var lastMenuBarDisplayMode: MenuBarDisplayMode = .iconOnly
+    private var lastFloatingBadgeMode: FloatingBadgeMode = .autoWhenOccluded
+    private var lastLaunchAtLoginEnabled: Bool = false
     private var keyMonitor: Any?
 
     override func loadView() {
-        let effectView = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 454, height: 702))
+        let effectView = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 464, height: 556))
         effectView.material = .popover
         effectView.blendingMode = .behindWindow
         effectView.state = .active
         effectView.appearance = NSAppearance(named: .aqua)
 
-        // 高不透明度冰瓷亮底 (alpha 0.94)，彻底隔绝后方深色终端透色造成的灰暗与文字对比度下降
         let porcelainTint = NSView()
         porcelainTint.wantsLayer = true
-        porcelainTint.layer?.backgroundColor = NSColor(srgbRed: 0.968, green: 0.980, blue: 0.994, alpha: 0.94).cgColor
+        porcelainTint.layer?.backgroundColor = NSColor(srgbRed: 0.973, green: 0.982, blue: 0.994, alpha: 0.96).cgColor
         porcelainTint.translatesAutoresizingMaskIntoConstraints = false
         effectView.addSubview(porcelainTint)
         NSLayoutConstraint.activate([
@@ -1319,17 +2434,39 @@ final class StatusPopoverViewController: NSViewController {
 
         self.view = effectView
         setupLayout()
+        setupFloatingOverlays()
+        setupApiKeyPanelCallbacks()
     }
 
     override func viewDidAppear() {
         super.viewDidAppear()
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 53 { // Esc 关闭卡片
-                self?.onRequestClosePopover?()
+            guard let self else { return event }
+            if self.isApiKeyModalVisible {
+                if event.keyCode == 53 { // Esc 关闭内嵌 API-Key 弹窗并保持主面板开启
+                    self.dismissApiKeyPanelIfVisible()
+                    return nil
+                }
+                if event.keyCode == 36 || event.keyCode == 76 { // Return 直接保存
+                    self.apiKeyPanelContent.submitCurrentForm()
+                    return nil
+                }
+                return event
+            }
+            if self.activeDropdown != .none, event.keyCode == 53 {
+                if self.activeDropdown == .consoleSelector {
+                    self.toggleSettingsGearDropdown()
+                } else {
+                    self.dismissDropdownMenu()
+                }
+                return nil
+            }
+            if event.keyCode == 53 {
+                self.onRequestClosePopover?()
                 return nil
             }
             if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "r" {
-                self?.onRefreshQuota?()
+                self.onRefreshQuota?()
                 return nil
             }
             return event
@@ -1338,6 +2475,8 @@ final class StatusPopoverViewController: NSViewController {
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
+        dismissDropdownMenu()
+        hoverBreakdownCard.isHidden = true
         if let monitor = keyMonitor {
             NSEvent.removeMonitor(monitor)
             keyMonitor = nil
@@ -1345,219 +2484,343 @@ final class StatusPopoverViewController: NSViewController {
     }
 
     private func setupLayout() {
-        let rootStack = NSStackView()
-        rootStack.orientation = .vertical
-        rootStack.alignment = .width
-        rootStack.spacing = 7.5
-        rootStack.edgeInsets = NSEdgeInsets(top: 11, left: 14, bottom: 11, right: 14)
-        rootStack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(rootStack)
+        // Explicit symmetrical 16pt horizontal margins across 464pt Popover (contentWidth = 432pt, zero NSStackView left-shift)
+        let padX: CGFloat = 16
 
-        NSLayoutConstraint.activate([
-            rootStack.topAnchor.constraint(equalTo: view.topAnchor),
-            rootStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            rootStack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            rootStack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            view.widthAnchor.constraint(equalToConstant: 454)
-        ])
-
-        // 1. Header Row
+        // 1. Minimalist Header: [22x22 Logo] AgentSpur [● 正在工作 34m 59s]  <spacer>  [🔑 Key ▾] [↻ ⌘R] [⚙︎]
         brandIconView.image = SpriteRenderer.renderBrandLogoImage(pointSize: 22)
-        brandIconView.translatesAutoresizingMaskIntoConstraints = false
-        headerSpriteView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            brandIconView.widthAnchor.constraint(equalToConstant: 22),
-            brandIconView.heightAnchor.constraint(equalToConstant: 22),
-            headerSpriteView.widthAnchor.constraint(equalToConstant: 20),
-            headerSpriteView.heightAnchor.constraint(equalToConstant: 20)
-        ])
 
-        headerStatusLabel.font = NSFont.systemFont(ofSize: 13.0, weight: .semibold)
-        headerStatusLabel.textColor = NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0)
-        headerStatusLabel.lineBreakMode = .byTruncatingTail
-        headerStatusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        brandTitleLabel.font = NSFont.systemFont(ofSize: 13.5, weight: .bold)
+        brandTitleLabel.textColor = NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0)
+        brandTitleLabel.setContentHuggingPriority(.required, for: .horizontal)
+        brandTitleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        headerSubLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.0, weight: .medium)
-        headerSubLabel.textColor = NSColor(srgbRed: 0.32, green: 0.40, blue: 0.50, alpha: 1.0)
-        headerSubLabel.lineBreakMode = .byTruncatingTail
-        headerSubLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        statusCapsule.setContentHuggingPriority(.required, for: .horizontal)
+        statusCapsule.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
 
-        let titleStack = NSStackView(views: [headerStatusLabel, headerSubLabel])
-        titleStack.orientation = .vertical
-        titleStack.alignment = .leading
-        titleStack.spacing = 1
-        titleStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let identityGroup = NSStackView(views: [brandIconView, brandTitleLabel, statusCapsule])
+        identityGroup.orientation = .horizontal
+        identityGroup.alignment = .centerY
+        identityGroup.spacing = 6.5
+        identityGroup.translatesAutoresizingMaskIntoConstraints = false
 
-        currencyBtn = makeLightButton(title: "¥ CNY", tinted: true, action: #selector(handleCurrencyToggleClick))
-        let keyBtn = makeLightButton(title: "额度Key", tinted: false, action: #selector(handleApiKeyClick))
-        let refreshBtn = makeLightButton(title: "刷新 ⌘R", tinted: false, action: #selector(handleRefreshClick))
+        keySelectorCapsule.widthAnchor.constraint(lessThanOrEqualToConstant: 118).isActive = true
+        keySelectorCapsule.onPress = { [weak self] in
+            self?.toggleKeyAndCurrencyDropdown()
+        }
 
-        let topBar = NSStackView(views: [brandIconView, headerSpriteView, titleStack, NSView(), currencyBtn, keyBtn, refreshBtn])
-        topBar.orientation = .horizontal
-        topBar.alignment = .centerY
-        topBar.spacing = 5
-        rootStack.addArrangedSubview(topBar)
+        refreshCapsule.onPress = { [weak self] in
+            self?.dismissDropdownMenu()
+            self?.onRefreshQuota?()
+        }
 
-        quotaInfoLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.0, weight: .medium)
-        quotaInfoLabel.textColor = NSColor(srgbRed: 0.24, green: 0.32, blue: 0.43, alpha: 1.0)
-        quotaInfoLabel.lineBreakMode = .byTruncatingTail
-        rootStack.addArrangedSubview(quotaInfoLabel)
+        settingsCapsule.onPress = { [weak self] in
+            self?.toggleSettingsGearDropdown()
+        }
 
-        rootStack.addArrangedSubview(makeHairline())
+        let controlGroup = NSStackView(views: [keySelectorCapsule, refreshCapsule, settingsCapsule])
+        controlGroup.orientation = .horizontal
+        controlGroup.alignment = .centerY
+        controlGroup.spacing = 5
+        controlGroup.translatesAutoresizingMaskIntoConstraints = false
+        controlGroup.setContentHuggingPriority(.required, for: .horizontal)
+        controlGroup.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        // 2. 今日精算与 Cache 命中透视卡片
-        let billingTitle = NSTextField(labelWithString: "今日开销精算与 Cache 命中透视")
-        billingTitle.font = NSFont.systemFont(ofSize: 11.2, weight: .semibold)
-        billingTitle.textColor = NSColor(srgbRed: 0.07, green: 0.11, blue: 0.18, alpha: 1.0)
+        let headerBar = NSView()
+        headerBar.translatesAutoresizingMaskIntoConstraints = false
+        headerBar.addSubview(identityGroup)
+        headerBar.addSubview(controlGroup)
+        view.addSubview(headerBar)
 
-        csvClearBtn = makeLightButton(title: "切回今日库", tinted: false, action: #selector(handleClearCSVClick))
-        csvClearBtn.isHidden = true
-        csvActionBtn = makeLightButton(title: "导入官方CSV", tinted: true, action: #selector(handleImportCSVClick))
+        // 2. Symmetrical Cost & Cache Overview Card (Exact 432pt Centered)
+        billingCard.translatesAutoresizingMaskIntoConstraints = false
+        billingCard.onExitCSVMode = { [weak self] in
+            self?.onClearOfficialCSV?()
+        }
+        billingCard.onClickBalanceArea = { [weak self] in
+            self?.presentApiKeyPanel()
+        }
+        billingCard.onHoverStateChange = { [weak self] hovering in
+            guard let self else { return }
+            if hovering && self.activeDropdown == .none && !self.isApiKeyModalVisible {
+                self.hoverBreakdownCard.alphaValue = 1.0
+                self.hoverBreakdownCard.isHidden = false
+            } else {
+                self.hoverBreakdownCard.isHidden = true
+            }
+        }
+        view.addSubview(billingCard)
 
-        let billingHeader = NSStackView(views: [billingTitle, NSView(), csvClearBtn, csvActionBtn])
-        billingHeader.orientation = .horizontal
-        billingHeader.alignment = .centerY
-        billingHeader.spacing = 5
-        rootStack.addArrangedSubview(billingHeader)
+        // 3. Full-Width 4-Column Segmented Filter Bar (Exact 432pt Centered)
+        filterSegmentBar.translatesAutoresizingMaskIntoConstraints = false
+        filterSegmentBar.onSelectIndex = { [weak self] idx in
+            guard let self else { return }
+            self.dismissDropdownMenu()
+            self.currentFilter = SessionGroupFilter(rawValue: idx) ?? .all
+            self.onFilterChanged?()
+        }
+        view.addSubview(filterSegmentBar)
 
-        rootStack.addArrangedSubview(billingCard)
-
-        rootStack.addArrangedSubview(makeHairline())
-
-        // 3. Real Terminal Window Auto-Focus Bar
-        autoFocusSwitch.controlSize = .mini
-        autoFocusSwitch.target = self
-        autoFocusSwitch.action = #selector(handleAutoFocusToggle)
-
-        let autoFocusLabel = NSTextField(labelWithString: "终端自动聚焦")
-        autoFocusLabel.font = NSFont.systemFont(ofSize: 11.2, weight: .semibold)
-        autoFocusLabel.textColor = NSColor(srgbRed: 0.08, green: 0.13, blue: 0.20, alpha: 1.0)
-        autoFocusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        autoFocusPopup.controlSize = .small
-        autoFocusPopup.font = NSFont.systemFont(ofSize: 11)
-        autoFocusPopup.addItem(withTitle: "自动跟随当前前台终端窗口")
-        autoFocusPopup.target = self
-        autoFocusPopup.action = #selector(handleAutoFocusTargetChange)
-        autoFocusPopup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let focusRow = NSStackView(views: [autoFocusSwitch, autoFocusLabel, NSView(), autoFocusPopup])
-        focusRow.orientation = .horizontal
-        focusRow.alignment = .centerY
-        focusRow.spacing = 6
-        rootStack.addArrangedSubview(focusRow)
-
-        // 4. Full-Width Session Group Filter
-        groupSegment = NSSegmentedControl(
-            labels: ["今日 0", "待处理 0", "运行中 0", "已完成 0"],
-            trackingMode: .selectOne,
-            target: self,
-            action: #selector(handleGroupSegmentChange)
-        )
-        groupSegment.selectedSegment = 0
-        groupSegment.segmentStyle = .rounded
-        groupSegment.segmentDistribution = .fillEqually
-        groupSegment.controlSize = .small
-        rootStack.addArrangedSubview(groupSegment)
-
-        // 5. Scrollable Read-Only Session Hierarchy
-        listStack.orientation = .vertical
-        listStack.alignment = .width
-        listStack.spacing = 4.5
-        listStack.translatesAutoresizingMaskIntoConstraints = false
+        // 4. Clean Accordion Session List Container (Exact 432pt Centered)
+        let listContainer = NSView()
+        listContainer.wantsLayer = true
+        listContainer.layer?.cornerRadius = 11.5
+        listContainer.layer?.backgroundColor = NSColor.white.cgColor
+        listContainer.layer?.borderWidth = 1.0
+        listContainer.layer?.borderColor = NSColor(srgbRed: 0.87, green: 0.91, blue: 0.95, alpha: 1.0).cgColor
+        listContainer.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = NSScrollView()
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.heightAnchor.constraint(equalToConstant: 192).isActive = true
-        scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
 
-        let docContainer = FlippedDocumentView()
-        docContainer.translatesAutoresizingMaskIntoConstraints = false
-        docContainer.addSubview(listStack)
-        scrollView.documentView = docContainer
+        sessionDocContainer.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = sessionDocContainer
+        listContainer.addSubview(scrollView)
+        view.addSubview(listContainer)
+
+        // 5. Compact 24H Sparkline Bar Chart (Exact 432pt Centered)
+        let chartTitle = NSTextField(labelWithString: "24H 趋势")
+        chartTitle.font = NSFont.systemFont(ofSize: 11.2, weight: .semibold)
+        chartTitle.textColor = NSColor(srgbRed: 0.30, green: 0.38, blue: 0.48, alpha: 1.0)
+        chartTitle.translatesAutoresizingMaskIntoConstraints = false
+
+        chartHoverLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .medium)
+        chartHoverLabel.textColor = NSColor(srgbRed: 0.52, green: 0.59, blue: 0.68, alpha: 1.0)
+        chartHoverLabel.alignment = .right
+        chartHoverLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let chartHeader = NSView()
+        chartHeader.translatesAutoresizingMaskIntoConstraints = false
+        chartHeader.addSubview(chartTitle)
+        chartHeader.addSubview(chartHoverLabel)
+        view.addSubview(chartHeader)
+
+        sparklineView.translatesAutoresizingMaskIntoConstraints = false
+        sparklineView.onHoverReadoutChange = { [weak self] text in
+            guard let self else { return }
+            self.chartHoverLabel.stringValue = text ?? "00:00 - 24:00 · 悬停看明细"
+            self.chartHoverLabel.textColor = text != nil
+                ? NSColor(srgbRed: 0.02, green: 0.44, blue: 0.68, alpha: 1.0)
+                : NSColor(srgbRed: 0.52, green: 0.59, blue: 0.68, alpha: 1.0)
+        }
+        view.addSubview(sparklineView)
+
+        // 6. Clean Single-Row Footer Toolbar: [🐳 深海小鲸 ▾]  <spacer>  [🔔 提醒开启] [✕ 退出]
+        rolePackCapsule.translatesAutoresizingMaskIntoConstraints = false
+        rolePackCapsule.onPress = { [weak self] in
+            self?.toggleRolePackDropdown()
+        }
+
+        bellToggleCapsule.translatesAutoresizingMaskIntoConstraints = false
+        bellToggleCapsule.onPress = { [weak self] in
+            self?.dismissDropdownMenu()
+            self?.onToggleNotificationsMuted?()
+        }
+
+        quitCapsule.translatesAutoresizingMaskIntoConstraints = false
+        quitCapsule.onPress = { [weak self] in
+            self?.onQuitApp?()
+        }
+
+        let footerToolbar = NSView()
+        footerToolbar.translatesAutoresizingMaskIntoConstraints = false
+        footerToolbar.addSubview(rolePackCapsule)
+        footerToolbar.addSubview(bellToggleCapsule)
+        footerToolbar.addSubview(quitCapsule)
+        view.addSubview(footerToolbar)
 
         NSLayoutConstraint.activate([
-            docContainer.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            docContainer.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
-            docContainer.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
-            listStack.topAnchor.constraint(equalTo: docContainer.topAnchor),
-            listStack.leadingAnchor.constraint(equalTo: docContainer.leadingAnchor),
-            listStack.trailingAnchor.constraint(equalTo: docContainer.trailingAnchor),
-            listStack.bottomAnchor.constraint(equalTo: docContainer.bottomAnchor)
+            view.widthAnchor.constraint(equalToConstant: 464),
+
+            // Header Bar
+            headerBar.topAnchor.constraint(equalTo: view.topAnchor, constant: 15),
+            headerBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: padX),
+            headerBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -padX),
+            headerBar.heightAnchor.constraint(equalToConstant: 28),
+
+            identityGroup.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor),
+            identityGroup.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            identityGroup.trailingAnchor.constraint(lessThanOrEqualTo: controlGroup.leadingAnchor, constant: -6),
+
+            controlGroup.trailingAnchor.constraint(equalTo: headerBar.trailingAnchor),
+            controlGroup.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+
+            // Billing Card
+            billingCard.topAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: 12),
+            billingCard.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: padX),
+            billingCard.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -padX),
+
+            // Segmented Filter Bar
+            filterSegmentBar.topAnchor.constraint(equalTo: billingCard.bottomAnchor, constant: 12),
+            filterSegmentBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: padX),
+            filterSegmentBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -padX),
+
+            // Session List Container
+            listContainer.topAnchor.constraint(equalTo: filterSegmentBar.bottomAnchor, constant: 10),
+            listContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: padX),
+            listContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -padX),
+            listContainer.heightAnchor.constraint(equalToConstant: 204),
+
+            scrollView.topAnchor.constraint(equalTo: listContainer.topAnchor, constant: 6),
+            scrollView.leadingAnchor.constraint(equalTo: listContainer.leadingAnchor, constant: 6),
+            scrollView.trailingAnchor.constraint(equalTo: listContainer.trailingAnchor, constant: -6),
+            scrollView.bottomAnchor.constraint(equalTo: listContainer.bottomAnchor, constant: -6),
+
+            sessionDocContainer.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            sessionDocContainer.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            sessionDocContainer.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+
+            // 24H Trend Header & Sparkline
+            chartHeader.topAnchor.constraint(equalTo: listContainer.bottomAnchor, constant: 12),
+            chartHeader.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: padX),
+            chartHeader.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -padX),
+            chartHeader.heightAnchor.constraint(equalToConstant: 16),
+
+            chartTitle.leadingAnchor.constraint(equalTo: chartHeader.leadingAnchor),
+            chartTitle.centerYAnchor.constraint(equalTo: chartHeader.centerYAnchor),
+            chartHoverLabel.trailingAnchor.constraint(equalTo: chartHeader.trailingAnchor),
+            chartHoverLabel.centerYAnchor.constraint(equalTo: chartHeader.centerYAnchor),
+            chartHoverLabel.leadingAnchor.constraint(greaterThanOrEqualTo: chartTitle.trailingAnchor, constant: 8),
+
+            sparklineView.topAnchor.constraint(equalTo: chartHeader.bottomAnchor, constant: 5),
+            sparklineView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: padX),
+            sparklineView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -padX),
+            sparklineView.heightAnchor.constraint(equalToConstant: 54),
+
+            // Footer Toolbar
+            footerToolbar.topAnchor.constraint(equalTo: sparklineView.bottomAnchor, constant: 12),
+            footerToolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: padX),
+            footerToolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -padX),
+            footerToolbar.heightAnchor.constraint(equalToConstant: 28),
+            footerToolbar.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -14),
+
+            rolePackCapsule.leadingAnchor.constraint(equalTo: footerToolbar.leadingAnchor),
+            rolePackCapsule.centerYAnchor.constraint(equalTo: footerToolbar.centerYAnchor),
+            quitCapsule.trailingAnchor.constraint(equalTo: footerToolbar.trailingAnchor),
+            quitCapsule.centerYAnchor.constraint(equalTo: footerToolbar.centerYAnchor),
+            bellToggleCapsule.trailingAnchor.constraint(equalTo: quitCapsule.leadingAnchor, constant: -6),
+            bellToggleCapsule.centerYAnchor.constraint(equalTo: footerToolbar.centerYAnchor)
         ])
-        rootStack.addArrangedSubview(scrollView)
-
-        rootStack.addArrangedSubview(makeHairline())
-
-        // 6. Today 24-Hour Interactive Chart Section
-        let chartTitle = NSTextField(labelWithString: "今日 24 小时分时趋势 (悬停看明细)")
-        chartTitle.font = NSFont.systemFont(ofSize: 11.2, weight: .semibold)
-        chartTitle.textColor = NSColor(srgbRed: 0.07, green: 0.11, blue: 0.18, alpha: 1.0)
-
-        chartMetricSegment.selectedSegment = 0
-        chartMetricSegment.controlSize = .mini
-        chartMetricSegment.target = self
-        chartMetricSegment.action = #selector(handleChartMetricChange)
-
-        let chartHeader = NSStackView(views: [chartTitle, NSView(), chartMetricSegment])
-        chartHeader.orientation = .horizontal
-        chartHeader.alignment = .centerY
-        rootStack.addArrangedSubview(chartHeader)
-
-        chartView.translatesAutoresizingMaskIntoConstraints = false
-        chartView.heightAnchor.constraint(equalToConstant: 88).isActive = true
-        chartView.setContentHuggingPriority(.required, for: .vertical)
-        chartView.setContentCompressionResistancePriority(.required, for: .vertical)
-        rootStack.addArrangedSubview(chartView)
-
-        rootStack.addArrangedSubview(makeHairline())
-
-        // 7. Preferences & Role Pack Footer
-        silentSwitch.controlSize = .mini
-        silentSwitch.target = self
-        silentSwitch.action = #selector(handleSilentSwitchToggle)
-
-        let silentLabel = NSTextField(labelWithString: "静音通知")
-        silentLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        silentLabel.textColor = NSColor(srgbRed: 0.14, green: 0.20, blue: 0.28, alpha: 1.0)
-        silentLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        packPopup.controlSize = .small
-        packPopup.font = NSFont.systemFont(ofSize: 11)
-        packPopup.target = self
-        packPopup.action = #selector(handlePackSelection)
-
-        let importBtn = makeLightButton(title: "导入角色包", tinted: true, action: #selector(handleImportPackClick))
-        let quitBtn = makeLightButton(title: "退出", tinted: false, action: #selector(handleQuitClick))
-
-        let footerRow = NSStackView(views: [silentSwitch, silentLabel, NSView(), packPopup, importBtn, quitBtn])
-        footerRow.orientation = .horizontal
-        footerRow.alignment = .centerY
-        footerRow.spacing = 6
-        rootStack.addArrangedSubview(footerRow)
     }
 
-    // MARK: - Fast 15 FPS Sprite-Only Update & 1 Hz Timer Update (No View Rebuild!)
+    private func setupFloatingOverlays() {
+        // 1. Symmetrical Dark Cost Breakdown Hover Card (Flush-aligned 1:1 with billingCard, centered in Popover)
+        hoverBreakdownCard.isHidden = true
+        hoverBreakdownCard.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(hoverBreakdownCard)
+
+        // 2. In-Popover Dropdown Overlay (hosts dropdownCard directly inside itself for deterministic hitTest)
+        dropdownOverlay.isHidden = true
+        dropdownOverlay.translatesAutoresizingMaskIntoConstraints = false
+        dropdownOverlay.onTapOutside = { [weak self] in
+            self?.dismissDropdownMenu()
+        }
+        view.addSubview(dropdownOverlay)
+
+        // 3. In-Popover Dimmed Modal Overlay (hosts apiKeyPanelContent directly inside itself)
+        apiKeyModalOverlay.isHidden = true
+        apiKeyModalOverlay.translatesAutoresizingMaskIntoConstraints = false
+        apiKeyModalOverlay.onTapOutside = { [weak self] in
+            self?.dismissApiKeyPanelIfVisible()
+        }
+        view.addSubview(apiKeyModalOverlay)
+
+        NSLayoutConstraint.activate([
+            hoverBreakdownCard.topAnchor.constraint(equalTo: billingCard.bottomAnchor, constant: 6),
+            hoverBreakdownCard.leadingAnchor.constraint(equalTo: billingCard.leadingAnchor),
+            hoverBreakdownCard.trailingAnchor.constraint(equalTo: billingCard.trailingAnchor),
+
+            dropdownOverlay.topAnchor.constraint(equalTo: view.topAnchor),
+            dropdownOverlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            dropdownOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            dropdownOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            apiKeyModalOverlay.topAnchor.constraint(equalTo: view.topAnchor),
+            apiKeyModalOverlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            apiKeyModalOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            apiKeyModalOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            apiKeyPanelContent.centerXAnchor.constraint(equalTo: apiKeyModalOverlay.centerXAnchor),
+            apiKeyPanelContent.centerYAnchor.constraint(equalTo: apiKeyModalOverlay.centerYAnchor),
+            apiKeyPanelContent.widthAnchor.constraint(equalToConstant: 428)
+        ])
+    }
+
+    private func setupApiKeyPanelCallbacks() {
+        apiKeyPanelContent.onClose = { [weak self] in
+            self?.dismissApiKeyPanelIfVisible()
+        }
+        apiKeyPanelContent.onRescanOpenCode = { [weak self] in
+            self?.onRefreshQuota?()
+        }
+        apiKeyPanelContent.onSelectScope = { [weak self] scopeId in
+            self?.onSelectApiKeyScope?(scopeId)
+        }
+        apiKeyPanelContent.onDeleteProfile = { [weak self] profileId in
+            self?.onDeleteApiKeyProfile?(profileId)
+        }
+        apiKeyPanelContent.onSaveProfile = { [weak self] name, secret, kw in
+            guard let self else { return }
+            self.onSaveApiKeyProfile?(name, secret, kw)
+            self.dismissApiKeyPanelIfVisible()
+        }
+    }
+
+    // MARK: - In-Popover Embedded API-Key Modal Lifecycle (Never Leaves _NSPopoverWindow)
+
+    private func presentApiKeyPanel() {
+        dismissDropdownMenu()
+        hoverBreakdownCard.isHidden = true
+
+        apiKeyPanelContent.reloadProfiles(
+            lastApiKeyProfiles,
+            selectedScopeId: lastSelectedKeyScopeId,
+            resetInputs: true
+        )
+
+        onModalPanelStateChange?(true)
+        apiKeyPanelContent.alphaValue = 1.0
+        apiKeyPanelContent.isHidden = false
+        apiKeyModalOverlay.alphaValue = 1.0
+        apiKeyModalOverlay.isHidden = false
+        view.layoutSubtreeIfNeeded()
+
+        NSApplication.shared.activate()
+        view.window?.makeKey()
+        view.window?.makeFirstResponder(apiKeyPanelContent.preferredInitialField)
+    }
+
+    func dismissApiKeyPanelIfVisible() {
+        view.window?.endEditing(for: nil)
+        view.window?.makeFirstResponder(nil)
+        apiKeyModalOverlay.isHidden = true
+        onModalPanelStateChange?(false)
+        view.window?.makeKey()
+    }
+
+    func forceDismissAllOverlays() {
+        dismissDropdownMenu()
+        hoverBreakdownCard.isHidden = true
+        view.window?.endEditing(for: nil)
+        apiKeyModalOverlay.isHidden = true
+        onModalPanelStateChange?(false)
+    }
+
+    // MARK: - 15 FPS Sprite Update & 1 Hz Timer Update (Zero View Rebuilds)
 
     func tickAnimationFrame(topState: AgentRunState, activePack: DeepSeekRolePack, frameIndex: Int) {
         guard isViewLoaded else { return }
-        headerSpriteView.image = SpriteRenderer.renderSpriteFrame(
-            state: topState,
-            pack: activePack,
-            frame: frameIndex,
-            pointSize: 20
-        )
-        for row in activeRowViews {
-            let ptSize: CGFloat = row.isSubTaskRow ? 13 : 16
+        for row in activeRowViews where !row.isSubTaskRow {
             row.updateSpriteOnly(
                 SpriteRenderer.renderSpriteFrame(
                     state: row.boundState,
                     pack: activePack,
                     frame: frameIndex,
-                    pointSize: ptSize
+                    pointSize: 18
                 )
             )
         }
@@ -1566,21 +2829,18 @@ final class StatusPopoverViewController: NSViewController {
     func tickOneSecondTimers(topState: AgentRunState, topEnteredAtMs: Int64) {
         guard isViewLoaded else { return }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-        let topTimer = TimeFormatters.liveStateTimerLabel(
-            state: topState,
-            enteredAtMs: topEnteredAtMs,
-            nowMs: nowMs
-        )
-        headerStatusLabel.stringValue = "AgentSpur · \(topTimer)"
+        statusCapsule.update(state: topState, enteredAtMs: topEnteredAtMs, nowMs: nowMs)
         for row in activeRowViews {
             row.updateLiveTimerText(nowMs: nowMs)
         }
     }
 
-    // MARK: - Full Data Render
+    // MARK: - Full Data Render (Reads O(1) Pre-Aggregated Scope in <0.2ms)
 
     func renderSnapshot(
         snapshot: OpenCodeDBSnapshot,
+        apiKeyProfiles: [APIKeyProfile],
+        selectedKeyScopeId: String,
         quota: QuotaSnapshot,
         currencyMode: CurrencyDisplayMode,
         csvReconciliation: OfficialCSVReconciliation?,
@@ -1589,325 +2849,249 @@ final class StatusPopoverViewController: NSViewController {
         frameIndex: Int,
         autoFocusEnabled: Bool,
         selectedWindowId: String?,
-        silentAlertEnabled: Bool
+        notificationsMuted: Bool,
+        menuBarDisplayMode: MenuBarDisplayMode,
+        floatingBadgeMode: FloatingBadgeMode,
+        launchAtLoginEnabled: Bool
     ) {
         guard isViewLoaded else { return }
-        self.lastRenderedSnapshot = snapshot
+        self.lastSnapshot = snapshot
+        self.lastApiKeyProfiles = apiKeyProfiles
+        self.lastSelectedKeyScopeId = selectedKeyScopeId
+        self.lastCurrencyMode = currencyMode
+        self.lastAutoFocusEnabled = autoFocusEnabled
+        self.lastSelectedWindowId = selectedWindowId
+        self.lastCsvReconciliation = csvReconciliation
+        self.lastAllPacks = allPacks
+        self.lastActivePackId = activePack.id
+        self.lastMenuBarDisplayMode = menuBarDisplayMode
+        self.lastFloatingBadgeMode = floatingBadgeMode
+        self.lastLaunchAtLoginEnabled = launchAtLoginEnabled
+
+        if isApiKeyModalVisible {
+            apiKeyPanelContent.reloadProfiles(
+                apiKeyProfiles,
+                selectedScopeId: selectedKeyScopeId,
+                resetInputs: false
+            )
+        } else if activeDropdown == .consoleSelector {
+            // Keep multi-console list live when rescan finishes
+            showConsoleSelectorDropdown()
+        }
+
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         let currentWindow = DeepSeekPricingEngine.priceWindow()
         let safeRate = max(1.0, quota.usdToCnyRate)
+        self.lastUsdToCnyRate = safeRate
 
-        headerSpriteView.image = SpriteRenderer.renderSpriteFrame(
-            state: snapshot.topState,
-            pack: activePack,
-            frame: frameIndex,
-            pointSize: 20
-        )
+        let scope = snapshot.scoped(for: selectedKeyScopeId)
 
-        let topTimer = TimeFormatters.liveStateTimerLabel(
+        // 1. Header Identity & 28pt Capsule Controls
+        statusCapsule.update(
             state: snapshot.topState,
             enteredAtMs: snapshot.topStateEnteredAtMs,
             nowMs: nowMs
         )
-        headerStatusLabel.stringValue = "AgentSpur · \(topTimer)"
 
-        let runningMasterCount = snapshot.masters.filter { $0.state.isActiveRunning }.count
-        let activeSubCount = snapshot.masters.reduce(0) { acc, m in
-            acc + m.subTasks.filter { $0.state.isActiveRunning }.count
-        }
-        headerSubLabel.stringValue = snapshot.dbExists
-            ? "\(snapshot.activeDbFileName) · 今日会话 \(snapshot.masters.count) · 活跃代理 \(runningMasterCount + activeSubCount)"
-            : "等待 ~/.local/share/opencode/ 产生会话"
+        let shortScopeTitle = scope.title.count > 9 ? String(scope.title.prefix(9)) + "…" : scope.title
+        keySelectorCapsule.text = "🔑 \(shortScopeTitle) ▾"
+        keySelectorCapsule.isTintedAccent = (selectedKeyScopeId != APIKeyProfile.allKeysId)
 
-        currencyBtn.title = currencyMode.toggleButtonTitle
+        rolePackCapsule.text = "\(activePack.menuTitle) ▾"
 
-        let walletSummary: String
-        if let apiBal = quota.apiTotalBalance {
-            let balCny = quota.apiCurrency == "USD" ? apiBal * safeRate : apiBal
-            let formatted = DeepSeekPricingEngine.formatMoney(
-                amountCny: balCny,
-                mode: currencyMode,
-                usdToCnyRate: safeRate,
-                highPrecision: false
-            )
-            walletSummary = "钱包余额 \(formatted) (\(quota.walletBreakdownLabel))"
+        if notificationsMuted {
+            bellToggleCapsule.text = "🔕 已静音"
+            bellToggleCapsule.isTintedAccent = false
         } else {
-            let formatted = DeepSeekPricingEngine.formatMoney(
-                amountCny: snapshot.billing.spurCostCny,
-                mode: currencyMode,
-                usdToCnyRate: safeRate,
-                highPrecision: true
-            )
-            walletSummary = "今日精算 \(formatted)"
+            bellToggleCapsule.text = "🔔 提醒开启"
+            bellToggleCapsule.isTintedAccent = true
         }
 
-        quotaInfoLabel.stringValue = String(
-            format: "%@ · Cache %.1f%% · %@(UTC+8) · %@ $1=¥%.4f · %@",
-            walletSummary,
-            snapshot.billing.cacheHitRatePercent,
-            currentWindow.badgeText,
-            quota.fxSourceLabel,
-            safeRate,
-            quota.lastRefreshedHHMM
-        )
-
-        csvClearBtn.isHidden = (csvReconciliation == nil)
+        // 2. Hero Cost & Cache Card + Symmetrical Hover Breakdown Content
         billingCard.update(
-            billing: snapshot.billing,
+            scopeTitle: scope.title,
+            billing: scope.billing,
             csvReconciliation: csvReconciliation,
+            quota: quota,
             currencyMode: currencyMode,
-            usdToCnyRate: safeRate,
             currentWindow: currentWindow
         )
+        hoverBreakdownCard.configure(
+            billing: scope.billing,
+            csvReconciliation: csvReconciliation,
+            quota: quota
+        )
 
-        // 同步本机真实打开的终端窗口列表
-        autoFocusSwitch.state = autoFocusEnabled ? .on : .off
-        autoFocusPopup.isEnabled = autoFocusEnabled
+        // 3. Full-Width 4-Column Segmented Filter Bar & Minimalist Session List
+        let scopedMasters = scope.masters
+        let pending = scopedMasters.filter { $0.state == .confirm }
+        let running = scopedMasters.filter { $0.state == .thinking || $0.state == .working }
+        let completed = scopedMasters.filter { $0.state == .completed || $0.state == .error }
 
-        var desiredTitles: [String] = ["自动跟随当前前台终端窗口 (\(snapshot.realWindows.count)个在线)"]
-        var desiredIds: [String?] = [nil]
-        for w in snapshot.realWindows {
-            desiredTitles.append(w.popupMenuTitle)
-            desiredIds.append(w.id)
-        }
-        if snapshot.realWindows.isEmpty {
-            desiredTitles = ["自动跟随前台终端 (点击任务可唤醒终端)"]
-            desiredIds = [nil]
-        }
+        filterSegmentBar.selectedIndex = currentFilter.rawValue
+        filterSegmentBar.updateLabels([
+            "全部 \(scopedMasters.count)",
+            "待处理 \(pending.count)",
+            "运行中 \(running.count)",
+            "已完成 \(completed.count)"
+        ])
 
-        let currentPopupTitles = autoFocusPopup.itemArray.map { $0.title }
-        if currentPopupTitles != desiredTitles {
-            autoFocusPopup.removeAllItems()
-            for t in desiredTitles {
-                autoFocusPopup.menu?.addItem(withTitle: t, action: nil, keyEquivalent: "")
-            }
-            popupWindowIds = desiredIds
-        }
-
-        if let selId = selectedWindowId, let idx = popupWindowIds.firstIndex(of: selId) {
-            autoFocusPopup.selectItem(at: idx)
-        } else {
-            autoFocusPopup.selectItem(at: 0)
-        }
-
-        silentSwitch.state = silentAlertEnabled ? .on : .off
-
-        let packTitles = allPacks.map { $0.name }
-        if packPopup.itemTitles != packTitles {
-            packPopup.removeAllItems()
-            packPopup.addItems(withTitles: packTitles)
-        }
-        if let pIdx = allPacks.firstIndex(where: { $0.id == activePack.id }) {
-            packPopup.selectItem(at: pIdx)
-        }
-
-        let pending = snapshot.masters.filter { $0.state == .confirm }
-        let running = snapshot.masters.filter { $0.state == .thinking || $0.state == .working }
-        let completed = snapshot.masters.filter { $0.state == .completed || $0.state == .error }
-
-        groupSegment.setLabel("今日 \(snapshot.masters.count)", forSegment: 0)
-        groupSegment.setLabel("待处理 \(pending.count)", forSegment: 1)
-        groupSegment.setLabel("运行中 \(running.count)", forSegment: 2)
-        groupSegment.setLabel("已完成 \(completed.count)", forSegment: 3)
-
-        for v in listStack.arrangedSubviews {
-            listStack.removeArrangedSubview(v)
-            v.removeFromSuperview()
+        for sub in sessionDocContainer.subviews {
+            sub.removeFromSuperview()
         }
         activeRowViews.removeAll()
 
-        let groupsToShow: [(String, [MasterSessionItem])]
+        let visibleMasters: [MasterSessionItem]
         switch currentFilter {
-        case .all:
-            groupsToShow = [("待处理", pending), ("运行中", running), ("已完成", completed)]
-        case .pending:
-            groupsToShow = [("待处理", pending)]
-        case .running:
-            groupsToShow = [("运行中", running)]
-        case .completed:
-            groupsToShow = [("已完成", completed)]
+        case .all:       visibleMasters = scopedMasters
+        case .pending:   visibleMasters = pending
+        case .running:   visibleMasters = running
+        case .completed: visibleMasters = completed
         }
 
-        for (groupTitle, items) in groupsToShow {
-            if currentFilter == .all && items.isEmpty && groupTitle != "运行中" {
-                continue
-            }
-            let gLabel = NSTextField(labelWithString: "  \(groupTitle) (\(items.count))")
-            gLabel.font = NSFont.systemFont(ofSize: 10.5, weight: .semibold)
-            gLabel.textColor = NSColor(srgbRed: 0.28, green: 0.36, blue: 0.46, alpha: 1.0)
-            listStack.addArrangedSubview(gLabel)
+        if visibleMasters.isEmpty {
+            let emptyMsg = snapshot.dbExists
+                ? "当前筛选分组暂无会话"
+                : "等待 ~/.local/share/opencode/ 产生会话"
+            let emptyLabel = NSTextField(labelWithString: emptyMsg)
+            emptyLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .regular)
+            emptyLabel.textColor = NSColor(srgbRed: 0.56, green: 0.63, blue: 0.72, alpha: 1.0)
+            emptyLabel.alignment = .center
+            emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+            sessionDocContainer.addSubview(emptyLabel)
+            NSLayoutConstraint.activate([
+                emptyLabel.topAnchor.constraint(equalTo: sessionDocContainer.topAnchor, constant: 82),
+                emptyLabel.leadingAnchor.constraint(equalTo: sessionDocContainer.leadingAnchor, constant: 12),
+                emptyLabel.trailingAnchor.constraint(equalTo: sessionDocContainer.trailingAnchor, constant: -12),
+                emptyLabel.bottomAnchor.constraint(equalTo: sessionDocContainer.bottomAnchor, constant: -16)
+            ])
+        } else {
+            // 仅高亮最优先的 1 条匹配前台终端的主会话，杜绝同一仓库多条历史会话全部变蓝
+            let primaryFocusedMasterId: String? = autoFocusEnabled
+                ? visibleMasters.first(where: { shouldHighlightWindow($0.matchedWindow, selectedWindowId: selectedWindowId) })?.id
+                : nil
 
-            if items.isEmpty {
-                let empty = NSTextField(labelWithString: "    当前无\(groupTitle)任务")
-                empty.font = NSFont.systemFont(ofSize: 11)
-                empty.textColor = NSColor(srgbRed: 0.42, green: 0.50, blue: 0.59, alpha: 1.0)
-                listStack.addArrangedSubview(empty)
-                continue
-            }
+            var previousRow: NSView? = nil
 
-            for m in items {
+            for m in visibleMasters {
                 let row = SessionRowView(isSubTask: false)
+                row.translatesAutoresizingMaskIntoConstraints = false
                 let mSprite = SpriteRenderer.renderSpriteFrame(
                     state: m.state,
                     pack: activePack,
                     frame: frameIndex,
-                    pointSize: 16
+                    pointSize: 18
                 )
-
-                var metaParts: [String] = []
-                if m.spurCostCny > 0 {
-                    let totalStr = DeepSeekPricingEngine.formatMoney(
+                let costStr = m.spurCostCny > 0
+                    ? DeepSeekPricingEngine.formatMoney(
                         amountCny: m.spurCostCny,
                         mode: currencyMode,
                         usdToCnyRate: safeRate,
-                        highPrecision: true
+                        highPrecision: m.spurCostCny < 0.1
                     )
-                    if !m.subTasks.isEmpty && abs(m.spurCostCny - m.ownCostCny) > 0.0001 {
-                        let ownStr = DeepSeekPricingEngine.formatMoney(
-                            amountCny: m.ownCostCny,
-                            mode: currencyMode,
-                            usdToCnyRate: safeRate,
-                            highPrecision: m.ownCostCny < 0.1
-                        )
-                        metaParts.append("总 \(totalStr) (主 \(ownStr))")
-                    } else {
-                        metaParts.append(totalStr)
-                    }
-                }
-                if (m.inputCacheHitTokens + m.inputCacheMissTokens) > 0 {
-                    metaParts.append(String(format: "缓 %.0f%%", m.cacheHitPercent))
-                }
-                if m.requestCount > 0 {
-                    metaParts.append("\(m.requestCount)次")
-                }
-                if m.state == .completed, let dur = m.completedDurationSec {
-                    metaParts.append("耗时\(TimeFormatters.formatCompactSeconds(dur))")
-                }
-                if metaParts.isEmpty {
-                    metaParts.append(m.modelName)
-                }
-
-                let mFocused = autoFocusEnabled && shouldHighlightWindow(m.matchedWindow, selectedWindowId: selectedWindowId)
-                let isCollapsed = collapsedMasterIds.contains(m.id)
-
-                let mUsd = m.spurCostCny / safeRate
-                let winDesc = m.matchedWindow?.popupMenuTitle ?? (m.directory.isEmpty ? "本地会话" : m.directory)
-                let mTip = String(
-                    format: "点击跳回: %@\n目录: %@\n模型: %@ · 今日请求 %d 次\n含子代理总计: ¥%.4f ($%.4f) · 主会话自身: ¥%.4f (opencode记录 $%.4f)\nCache 命中: %@ / 未命中: %@ (%.1f%% · 已省 ¥%.4f)\n输出+推理: %@ · 状态源: %@",
-                    winDesc,
-                    m.directory,
-                    m.modelName,
-                    m.requestCount,
-                    m.spurCostCny,
-                    mUsd,
-                    m.ownCostCny,
-                    m.ownOpenCodeUsd,
-                    TimeFormatters.formatTokenCount(m.inputCacheHitTokens),
-                    TimeFormatters.formatTokenCount(m.inputCacheMissTokens),
-                    m.cacheHitPercent,
-                    m.cacheSavedCny,
-                    TimeFormatters.formatTokenCount(m.outputTokens),
-                    m.dbRecordRef
-                )
+                    : ""
+                let mFocused = (m.id == primaryFocusedMasterId)
+                let isExpanded = expandedMasterIds.contains(m.id)
+                let dimCompleted = (currentFilter == .all && m.state == .completed)
 
                 row.configureMaster(
                     state: m.state,
                     enteredAtMs: m.stateEnteredAtMs,
                     sprite: mSprite,
                     title: m.title,
+                    costText: costStr,
                     nowMs: nowMs,
-                    metaSummaryLeft: metaParts.joined(separator: " · "),
-                    terminalBadge: m.consoleBadgeText,
                     subTaskCount: m.subTasks.count,
-                    isCollapsed: isCollapsed,
+                    isExpanded: isExpanded,
                     isAutoFocused: mFocused,
-                    tooltipText: mTip
+                    dimmedCompleted: dimCompleted
                 )
                 row.onClick = { [weak self] in
                     self?.onRequestClosePopover?()
                     TerminalBridge.jumpToRealWindow(m.matchedWindow, fallbackDirectory: m.directory)
                 }
                 let masterId = m.id
-                row.onToggleCollapse = { [weak self] in
+                row.onToggleExpand = { [weak self] in
                     guard let self else { return }
-                    if self.collapsedMasterIds.contains(masterId) {
-                        self.collapsedMasterIds.remove(masterId)
+                    if self.expandedMasterIds.contains(masterId) {
+                        self.expandedMasterIds.remove(masterId)
                     } else {
-                        self.collapsedMasterIds.insert(masterId)
+                        self.expandedMasterIds.insert(masterId)
                     }
                     self.onFilterChanged?()
                 }
-                listStack.addArrangedSubview(row)
+                sessionDocContainer.addSubview(row)
+                NSLayoutConstraint.activate([
+                    row.topAnchor.constraint(
+                        equalTo: previousRow?.bottomAnchor ?? sessionDocContainer.topAnchor,
+                        constant: previousRow == nil ? 0 : 2.5
+                    ),
+                    row.leadingAnchor.constraint(equalTo: sessionDocContainer.leadingAnchor),
+                    row.trailingAnchor.constraint(equalTo: sessionDocContainer.trailingAnchor)
+                ])
+                previousRow = row
                 activeRowViews.append(row)
 
-                guard !isCollapsed else { continue }
+                guard isExpanded else { continue }
 
                 for sub in m.subTasks {
                     let subRow = SessionRowView(isSubTask: true)
-                    let sSprite = SpriteRenderer.renderSpriteFrame(
-                        state: sub.state,
-                        pack: activePack,
-                        frame: frameIndex,
-                        pointSize: 13
-                    )
-                    let sDur = (sub.state == .completed)
-                        ? sub.completedDurationSec.map { "耗时\(TimeFormatters.formatCompactSeconds($0))" }
-                        : nil
-                    let sCost = sub.spurCostCny > 0
-                        ? DeepSeekPricingEngine.formatMoney(amountCny: sub.spurCostCny, mode: currencyMode, usdToCnyRate: safeRate, highPrecision: true)
-                        : nil
-                    let sCacheBadge = (sub.inputCacheHitTokens + sub.inputCacheMissTokens) > 0
-                        ? String(format: "缓%.0f%%", sub.cacheHitPercent)
-                        : nil
-                    let sFocused = autoFocusEnabled && shouldHighlightWindow(sub.matchedWindow, selectedWindowId: selectedWindowId)
-                    let distinctBadge = (sub.consoleBadgeText != m.consoleBadgeText) ? sub.consoleBadgeText : nil
-
-                    // 清理子任务标题中已重复的 (@dev subagent) 后缀，让标题更清爽
+                    subRow.translatesAutoresizingMaskIntoConstraints = false
                     let cleanSubTitle = sub.title
                         .replacingOccurrences(of: " (\(sub.roleLabel) subagent)", with: "")
                         .replacingOccurrences(of: "(\(sub.roleLabel) subagent)", with: "")
 
-                    let sUsd = sub.spurCostCny / safeRate
-                    let sWinDesc = sub.matchedWindow?.popupMenuTitle ?? sub.directory
-                    let sTip = String(
-                        format: "子任务 %@ · 终端: %@\n今日请求 %d 次 · Cache 命中 %@ (%.1f%% · 已省 ¥%.4f)\n未命中 %@ · 输出 %@ · 今日精算 ¥%.6f ($%.6f)",
-                        sub.roleLabel,
-                        sWinDesc,
-                        sub.requestCount,
-                        TimeFormatters.formatTokenCount(sub.inputCacheHitTokens),
-                        sub.cacheHitPercent,
-                        sub.cacheSavedCny,
-                        TimeFormatters.formatTokenCount(sub.inputCacheMissTokens),
-                        TimeFormatters.formatTokenCount(sub.outputTokens),
-                        sub.spurCostCny,
-                        sUsd
-                    )
+                    var rightParts: [String] = []
+                    if sub.spurCostCny > 0 {
+                        rightParts.append(DeepSeekPricingEngine.formatMoney(
+                            amountCny: sub.spurCostCny,
+                            mode: currencyMode,
+                            usdToCnyRate: safeRate,
+                            highPrecision: sub.spurCostCny < 0.1
+                        ))
+                    }
+                    if (sub.inputCacheHitTokens + sub.inputCacheMissTokens) > 0 {
+                        rightParts.append(String(format: "%.0f%%", sub.cacheHitPercent))
+                    }
+                    if sub.state.isActiveRunning {
+                        rightParts.append(TimeFormatters.compactTimerOnly(enteredAtMs: sub.stateEnteredAtMs, nowMs: nowMs))
+                    }
 
                     subRow.configureSubTask(
                         state: sub.state,
                         enteredAtMs: sub.stateEnteredAtMs,
-                        sprite: sSprite,
                         roleLabel: sub.roleLabel,
                         title: cleanSubTitle,
-                        nowMs: nowMs,
-                        durationSuffix: sDur,
-                        costSuffix: sCost,
-                        cacheBadgeSuffix: sCacheBadge,
-                        distinctTerminalBadge: distinctBadge,
-                        isAutoFocused: sFocused,
-                        tooltipText: sTip
+                        rightSummaryText: rightParts.joined(separator: " · "),
+                        dimmedCompleted: dimCompleted
                     )
                     subRow.onClick = { [weak self] in
                         self?.onRequestClosePopover?()
                         TerminalBridge.jumpToRealWindow(sub.matchedWindow, fallbackDirectory: sub.directory)
                     }
-                    listStack.addArrangedSubview(subRow)
+                    sessionDocContainer.addSubview(subRow)
+                    NSLayoutConstraint.activate([
+                        subRow.topAnchor.constraint(
+                            equalTo: previousRow?.bottomAnchor ?? sessionDocContainer.topAnchor,
+                            constant: 2.0
+                        ),
+                        subRow.leadingAnchor.constraint(equalTo: sessionDocContainer.leadingAnchor),
+                        subRow.trailingAnchor.constraint(equalTo: sessionDocContainer.trailingAnchor)
+                    ])
+                    previousRow = subRow
                     activeRowViews.append(subRow)
                 }
             }
+
+            if let lastRow = previousRow {
+                lastRow.bottomAnchor.constraint(equalTo: sessionDocContainer.bottomAnchor, constant: -2).isActive = true
+            }
         }
 
-        chartView.points = snapshot.todayHourlySeries
+        // 4. 24H Sparkline Bar Chart
+        sparklineView.currencyMode = currencyMode
+        sparklineView.usdToCnyRate = safeRate
+        sparklineView.points = scope.todayHourlySeries
     }
 
     private func shouldHighlightWindow(_ matched: RealTerminalWindow?, selectedWindowId: String?) -> Bool {
@@ -1918,25 +3102,389 @@ final class StatusPopoverViewController: NSViewController {
         return matched.isActiveTab
     }
 
-    // MARK: - Control Actions
+    // MARK: - 1:1 Scrollable In-Popover Dropdown Menus (Key & Currency · Settings · Multi-Console Selector · Role Pack)
 
-    @objc private func handleRefreshClick() {
-        onRefreshQuota?()
+    private func dismissDropdownMenu() {
+        activeDropdown = .none
+        dropdownOverlay.isHidden = true
+        dropdownCard.isHidden = true
     }
 
-    @objc private func handleCurrencyToggleClick() {
-        onToggleCurrencyMode?()
+    private func showDropdownCard(
+        kind: ActiveDropdownKind,
+        sections: [[DropdownMenuItemSpec]],
+        width: CGFloat,
+        maxTotalHeight: CGFloat = 396,
+        pinnedBackHeader: DropdownMenuItemSpec? = nil,
+        anchorConstraints: [NSLayoutConstraint]
+    ) {
+        hoverBreakdownCard.isHidden = true
+        NSLayoutConstraint.deactivate(dropdownPositionConstraints)
+
+        dropdownCard.rebuild(
+            sections: sections,
+            cardWidth: width,
+            maxTotalHeight: maxTotalHeight,
+            pinnedBackHeader: pinnedBackHeader
+        )
+
+        NSLayoutConstraint.activate(anchorConstraints)
+        dropdownPositionConstraints = anchorConstraints
+
+        activeDropdown = kind
+        dropdownCard.alphaValue = 1.0
+        dropdownCard.isHidden = false
+        dropdownOverlay.alphaValue = 1.0
+        dropdownOverlay.isHidden = false
+        view.layoutSubtreeIfNeeded()
     }
 
-    @objc private func handleApiKeyClick() {
-        onConfigureApiKey?()
+    private func toggleKeyAndCurrencyDropdown() {
+        if activeDropdown == .keyAndCurrency {
+            dismissDropdownMenu()
+            return
+        }
+
+        let totalAllCny = lastSnapshot?.billing.spurCostCny ?? 0.0
+        let allCostText = DeepSeekPricingEngine.formatMoney(
+            amountCny: totalAllCny,
+            mode: lastCurrencyMode,
+            usdToCnyRate: lastUsdToCnyRate,
+            highPrecision: totalAllCny > 0 && totalAllCny < 0.1
+        )
+
+        var scopeItems: [DropdownMenuItemSpec] = [
+            DropdownMenuItemSpec(
+                title: "全部 Key (汇总)",
+                rightDetail: allCostText,
+                rightAccent: false,
+                style: lastSelectedKeyScopeId == APIKeyProfile.allKeysId ? .selected : .standard
+            ) { [weak self] in
+                self?.dismissDropdownMenu()
+                self?.onSelectApiKeyScope?(APIKeyProfile.allKeysId)
+            }
+        ]
+
+        if let scopes = lastSnapshot?.availableKeyScopes {
+            for sc in scopes {
+                let cText = DeepSeekPricingEngine.formatMoney(
+                    amountCny: sc.billing.spurCostCny,
+                    mode: lastCurrencyMode,
+                    usdToCnyRate: lastUsdToCnyRate,
+                    highPrecision: sc.billing.spurCostCny > 0 && sc.billing.spurCostCny < 0.1
+                )
+                let keyId = sc.keyId
+                scopeItems.append(DropdownMenuItemSpec(
+                    title: sc.title,
+                    rightDetail: cText,
+                    rightAccent: false,
+                    style: lastSelectedKeyScopeId == keyId ? .selected : .standard
+                ) { [weak self] in
+                    self?.dismissDropdownMenu()
+                    self?.onSelectApiKeyScope?(keyId)
+                })
+            }
+        }
+
+        let nextMode = lastCurrencyMode.next
+        let currencyDetail = lastCurrencyMode == .cny ? "¥ CNY → $ USD" : "$ USD → ¥ CNY"
+        let currencySection = [
+            DropdownMenuItemSpec(
+                title: "切换计费币种",
+                rightDetail: currencyDetail,
+                rightAccent: true,
+                style: .standard
+            ) { [weak self] in
+                self?.dismissDropdownMenu()
+                self?.onSelectCurrencyMode?(nextMode)
+            }
+        ]
+
+        let manageSection = [
+            DropdownMenuItemSpec(
+                title: "＋ 添加 / 管理多 API-Key…",
+                rightDetail: "",
+                rightAccent: true,
+                style: .accentAction
+            ) { [weak self] in
+                self?.presentApiKeyPanel()
+            }
+        ]
+
+        showDropdownCard(
+            kind: .keyAndCurrency,
+            sections: [scopeItems, currencySection, manageSection],
+            width: 274,
+            maxTotalHeight: 380,
+            anchorConstraints: [
+                dropdownCard.topAnchor.constraint(equalTo: keySelectorCapsule.bottomAnchor, constant: 6),
+                dropdownCard.trailingAnchor.constraint(equalTo: refreshCapsule.trailingAnchor)
+            ]
+        )
     }
 
-    @objc private func handleImportCSVClick() {
+    private func toggleSettingsGearDropdown() {
+        if activeDropdown == .settingsGear {
+            dismissDropdownMenu()
+            return
+        }
+
+        let menuBarSection: [DropdownMenuItemSpec] = MenuBarDisplayMode.allCases.map { mode in
+            let isSel = (mode == lastMenuBarDisplayMode)
+            return DropdownMenuItemSpec(
+                title: mode.settingsTitle,
+                rightDetail: isSel ? "✓" : "",
+                rightAccent: true,
+                style: isSel ? .selected : .standard
+            ) { [weak self] in
+                self?.dismissDropdownMenu()
+                self?.onSelectMenuBarDisplayMode?(mode)
+            }
+        }
+
+        var badgeSection: [DropdownMenuItemSpec] = FloatingBadgeMode.allCases.map { bMode in
+            let isSel = (bMode == lastFloatingBadgeMode)
+            return DropdownMenuItemSpec(
+                title: bMode.settingsTitle,
+                rightDetail: isSel ? "✓" : "",
+                rightAccent: true,
+                style: isSel ? .selected : .standard
+            ) { [weak self] in
+                self?.dismissDropdownMenu()
+                self?.onSelectFloatingBadgeMode?(bMode)
+            }
+        }
+
+        badgeSection.append(DropdownMenuItemSpec(
+            title: "开机自动启动驻留菜单栏",
+            rightDetail: lastLaunchAtLoginEnabled ? "✓" : "",
+            rightAccent: true,
+            style: lastLaunchAtLoginEnabled ? .selected : .standard
+        ) { [weak self] in
+            guard let self else { return }
+            let nextVal = !self.lastLaunchAtLoginEnabled
+            self.dismissDropdownMenu()
+            self.onToggleLaunchAtLogin?(nextVal)
+        })
+
+        let wins = lastSnapshot?.realWindows ?? []
+        let consoleSummaryText: String
+        if let selId = lastSelectedWindowId, let matched = wins.first(where: { $0.id == selId }) {
+            consoleSummaryText = "已固定 · \(matched.shortTargetSummary) ▸"
+        } else if wins.isEmpty {
+            consoleSummaryText = "自动跟随 (0 个) ▸"
+        } else {
+            consoleSummaryText = "自动跟随 (共 \(wins.count) 个) ▸"
+        }
+
+        let focusSection: [DropdownMenuItemSpec] = [
+            DropdownMenuItemSpec(
+                title: "终端自动聚焦高亮",
+                rightDetail: lastAutoFocusEnabled ? "✓" : "",
+                rightAccent: true,
+                style: .standard
+            ) { [weak self] in
+                guard let self else { return }
+                let toggled = !self.lastAutoFocusEnabled
+                self.dismissDropdownMenu()
+                self.onToggleAutoFocus?(toggled)
+            },
+            DropdownMenuItemSpec(
+                title: "选择聚焦控制台",
+                rightDetail: consoleSummaryText,
+                rightAccent: lastSelectedWindowId != nil,
+                style: lastSelectedWindowId != nil ? .selected : .standard
+            ) { [weak self] in
+                self?.showConsoleSelectorDropdown()
+            }
+        ]
+
+        var dataSection: [DropdownMenuItemSpec] = [
+            DropdownMenuItemSpec(
+                title: "管理多 API-Key 分组…",
+                rightDetail: "🔑",
+                rightAccent: false,
+                style: .standard
+            ) { [weak self] in
+                self?.presentApiKeyPanel()
+            },
+            DropdownMenuItemSpec(
+                title: "导入官方账单 CSV…",
+                rightDetail: "",
+                rightAccent: false,
+                style: .standard
+            ) { [weak self] in
+                self?.dismissDropdownMenu()
+                self?.handleImportCSVClick()
+            }
+        ]
+
+        if lastCsvReconciliation != nil {
+            dataSection.append(DropdownMenuItemSpec(
+                title: "退出 CSV 对账，切回实时库",
+                rightDetail: "",
+                rightAccent: true,
+                style: .accentAction
+            ) { [weak self] in
+                self?.dismissDropdownMenu()
+                self?.onClearOfficialCSV?()
+            })
+        }
+
+        let soundSection: [DropdownMenuItemSpec] = [
+            DropdownMenuItemSpec(
+                title: "发送测试通知与提示音",
+                rightDetail: "🔔",
+                rightAccent: false,
+                style: .standard
+            ) { [weak self] in
+                self?.dismissDropdownMenu()
+                self?.onTestNotificationSound?()
+            }
+        ]
+
+        showDropdownCard(
+            kind: .settingsGear,
+            sections: [menuBarSection, badgeSection, focusSection, dataSection, soundSection],
+            width: 304,
+            maxTotalHeight: 448,
+            anchorConstraints: [
+                dropdownCard.topAnchor.constraint(equalTo: settingsCapsule.bottomAnchor, constant: 6),
+                dropdownCard.trailingAnchor.constraint(equalTo: settingsCapsule.trailingAnchor)
+            ]
+        )
+    }
+
+    /// Dedicated scrollable sub-menu supporting 5, 10, or 30+ open Terminal / iTerm2 consoles without crowding the main Settings menu.
+    private func showConsoleSelectorDropdown() {
+        let wins = lastSnapshot?.realWindows ?? []
+
+        let backHeader = DropdownMenuItemSpec(
+            title: "‹ 返回设置菜单",
+            rightDetail: "共 \(wins.count) 个控制台",
+            rightAccent: false,
+            style: .mutedBackHeader
+        ) { [weak self] in
+            self?.toggleSettingsGearDropdown()
+        }
+
+        let autoSection: [DropdownMenuItemSpec] = [
+            DropdownMenuItemSpec(
+                title: "跟随前台活跃终端 (自动识别)",
+                rightDetail: lastSelectedWindowId == nil ? "✓" : "",
+                rightAccent: true,
+                style: lastSelectedWindowId == nil ? .selected : .standard
+            ) { [weak self] in
+                self?.dismissDropdownMenu()
+                self?.onSelectRealWindowId?(nil)
+            }
+        ]
+
+        let windowItems: [DropdownMenuItemSpec]
+        if wins.isEmpty {
+            windowItems = [
+                DropdownMenuItemSpec(
+                    title: "暂未检测到打开的 Terminal / iTerm2 窗口",
+                    rightDetail: "",
+                    rightAccent: false,
+                    style: .standard
+                ) { [weak self] in
+                    self?.onRefreshQuota?()
+                }
+            ]
+        } else {
+            windowItems = wins.enumerated().map { idx, w in
+                let wid = w.id
+                let isSel = (lastSelectedWindowId == wid)
+                let rightBadge = isSel ? "✓" : (w.isActiveTab ? "前台" : "")
+                return DropdownMenuItemSpec(
+                    title: w.indexedMenuTitle(index: idx + 1),
+                    rightDetail: rightBadge,
+                    rightAccent: isSel || w.isActiveTab,
+                    style: isSel ? .selected : .standard
+                ) { [weak self] in
+                    self?.dismissDropdownMenu()
+                    self?.onSelectRealWindowId?(wid)
+                }
+            }
+        }
+
+        let rescanSection: [DropdownMenuItemSpec] = [
+            DropdownMenuItemSpec(
+                title: "↻ 重新扫描本机所有控制台",
+                rightDetail: "",
+                rightAccent: true,
+                style: .accentAction
+            ) { [weak self] in
+                self?.onRefreshQuota?()
+            }
+        ]
+
+        showDropdownCard(
+            kind: .consoleSelector,
+            sections: [autoSection, windowItems, rescanSection],
+            width: 356,
+            maxTotalHeight: 386,
+            pinnedBackHeader: backHeader,
+            anchorConstraints: [
+                dropdownCard.topAnchor.constraint(equalTo: settingsCapsule.bottomAnchor, constant: 6),
+                dropdownCard.trailingAnchor.constraint(equalTo: settingsCapsule.trailingAnchor)
+            ]
+        )
+    }
+
+    private func toggleRolePackDropdown() {
+        if activeDropdown == .rolePack {
+            dismissDropdownMenu()
+            return
+        }
+
+        let packItems: [DropdownMenuItemSpec] = lastAllPacks.map { pack in
+            let pid = pack.id
+            let isSel = (pid == lastActivePackId)
+            return DropdownMenuItemSpec(
+                title: pack.menuTitle,
+                rightDetail: isSel ? "✓" : "",
+                rightAccent: true,
+                style: isSel ? .selected : .standard
+            ) { [weak self] in
+                self?.dismissDropdownMenu()
+                self?.onSelectPackId?(pid)
+            }
+        }
+
+        let importSection: [DropdownMenuItemSpec] = [
+            DropdownMenuItemSpec(
+                title: "＋ 导入自定义角色包 (.json)…",
+                rightDetail: "",
+                rightAccent: true,
+                style: .accentAction
+            ) { [weak self] in
+                self?.dismissDropdownMenu()
+                self?.handleImportPackClick()
+            }
+        ]
+
+        showDropdownCard(
+            kind: .rolePack,
+            sections: [packItems, importSection],
+            width: 224,
+            maxTotalHeight: 340,
+            anchorConstraints: [
+                dropdownCard.bottomAnchor.constraint(equalTo: rolePackCapsule.topAnchor, constant: -6),
+                dropdownCard.leadingAnchor.constraint(equalTo: rolePackCapsule.leadingAnchor)
+            ]
+        )
+    }
+
+    // MARK: - Native File Open Panels (Protected by .applicationDefined Lock)
+
+    private func handleImportCSVClick() {
         onModalPanelStateChange?(true)
         defer {
             onModalPanelStateChange?(false)
             NSApplication.shared.activate()
+            view.window?.makeKey()
         }
 
         let panel = NSOpenPanel()
@@ -1944,6 +3492,7 @@ final class StatusPopoverViewController: NSViewController {
         panel.allowedContentTypes = [.commaSeparatedText, .plainText]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 3)
 
         NSApplication.shared.activate()
         if panel.runModal() == .OK, !panel.urls.isEmpty {
@@ -1953,44 +3502,12 @@ final class StatusPopoverViewController: NSViewController {
         }
     }
 
-    @objc private func handleClearCSVClick() {
-        onClearOfficialCSV?()
-    }
-
-    @objc private func handleAutoFocusToggle() {
-        onToggleAutoFocus?(autoFocusSwitch.state == .on)
-    }
-
-    @objc private func handleAutoFocusTargetChange() {
-        let idx = autoFocusPopup.indexOfSelectedItem
-        if idx >= 0 && idx < popupWindowIds.count {
-            onSelectRealWindowId?(popupWindowIds[idx])
-        }
-    }
-
-    @objc private func handleGroupSegmentChange() {
-        currentFilter = SessionGroupFilter(rawValue: groupSegment.selectedSegment) ?? .all
-        onFilterChanged?()
-    }
-
-    @objc private func handleChartMetricChange() {
-        chartView.metricKind = ChartMetricKind(rawValue: chartMetricSegment.selectedSegment) ?? .requests
-    }
-
-    @objc private func handleSilentSwitchToggle() {
-        onToggleSilentAlert?(silentSwitch.state == .on)
-    }
-
-    @objc private func handlePackSelection() {
-        let title = packPopup.titleOfSelectedItem ?? ""
-        onSelectPack?(title)
-    }
-
-    @objc private func handleImportPackClick() {
+    private func handleImportPackClick() {
         onModalPanelStateChange?(true)
         defer {
             onModalPanelStateChange?(false)
             NSApplication.shared.activate()
+            view.window?.makeKey()
         }
 
         let panel = NSOpenPanel()
@@ -1998,6 +3515,7 @@ final class StatusPopoverViewController: NSViewController {
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 3)
 
         NSApplication.shared.activate()
         if panel.runModal() == .OK, let url = panel.url,
@@ -2006,34 +3524,148 @@ final class StatusPopoverViewController: NSViewController {
             onImportCustomPack?(decoded)
         }
     }
-
-    @objc private func handleQuitClick() {
-        onQuitApp?()
-    }
-
-    private func makeHairline() -> NSView {
-        let v = NSView()
-        v.wantsLayer = true
-        v.layer?.backgroundColor = NSColor(srgbRed: 0.06, green: 0.09, blue: 0.16, alpha: 0.075).cgColor
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        return v
-    }
-
-    private func makeLightButton(title: String, tinted: Bool, action: Selector) -> NSButton {
-        let btn = NSButton(title: title, target: self, action: action)
-        btn.bezelStyle = .rounded
-        btn.controlSize = .small
-        btn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        btn.setContentCompressionResistancePriority(.required, for: .horizontal)
-        btn.setContentHuggingPriority(.required, for: .horizontal)
-        if tinted {
-            btn.contentTintColor = NSColor(srgbRed: 0.01, green: 0.52, blue: 0.78, alpha: 1.0)
-        }
-        return btn
-    }
 }
 
 private final class FlippedDocumentView: NSView {
     override var isFlipped: Bool { true }
+}
+
+// MARK: - All-Spaces & Full-Screen Persistent Floating Mini Capsule (Optional Anti-Notch / Full-Screen Pin)
+
+private final class FloatingBadgeContentView: NSView {
+    var onClickBadge: (() -> Void)?
+    var onOriginSaved: ((NSPoint) -> Void)?
+
+    private let spriteView = RetinaAspectFitImageView(pointSize: 18)
+    private let dotView = NSView()
+    private let moneyLabel = NSTextField(labelWithString: "¥0.00")
+
+    private var dragStartMouseScreen: NSPoint = .zero
+    private var dragStartWindowOrigin: NSPoint = .zero
+    private var didDragWindow = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 15
+        layer?.backgroundColor = NSColor(srgbRed: 0.985, green: 0.992, blue: 1.0, alpha: 0.96).cgColor
+        layer?.borderWidth = 1.0
+        layer?.borderColor = NSColor(srgbRed: 0.72, green: 0.84, blue: 0.95, alpha: 0.95).cgColor
+
+        dotView.wantsLayer = true
+        dotView.layer?.cornerRadius = 3
+        dotView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            dotView.widthAnchor.constraint(equalToConstant: 6),
+            dotView.heightAnchor.constraint(equalToConstant: 6)
+        ])
+
+        moneyLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.2, weight: .semibold)
+        moneyLabel.textColor = NSColor(srgbRed: 0.08, green: 0.13, blue: 0.22, alpha: 1.0)
+        moneyLabel.lineBreakMode = .byClipping
+
+        let stack = NSStackView(views: [spriteView, dotView, moneyLabel])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 5
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 9, bottom: 0, right: 10)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, alphaValue > 0.01 else { return nil }
+        return super.hitTest(point) != nil ? self : nil
+    }
+
+    func update(sprite: NSImage, amountText: String, state: AgentRunState) {
+        spriteView.image = sprite
+        moneyLabel.stringValue = amountText
+        dotView.layer?.backgroundColor = state.accentColor.cgColor
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        dragStartMouseScreen = NSEvent.mouseLocation
+        dragStartWindowOrigin = window?.frame.origin ?? .zero
+        didDragWindow = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let win = window else { return }
+        let cur = NSEvent.mouseLocation
+        let dx = cur.x - dragStartMouseScreen.x
+        let dy = cur.y - dragStartMouseScreen.y
+        if hypot(dx, dy) > 3.0 {
+            didDragWindow = true
+        }
+        if didDragWindow {
+            win.setFrameOrigin(NSPoint(x: dragStartWindowOrigin.x + dx, y: dragStartWindowOrigin.y + dy))
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if didDragWindow {
+            if let origin = window?.frame.origin {
+                onOriginSaved?(origin)
+            }
+        } else {
+            onClickBadge?()
+        }
+    }
+}
+
+final class FloatingStatusBadgePanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    private let badgeContent = FloatingBadgeContentView(frame: NSRect(x: 0, y: 0, width: 104, height: 30))
+
+    var anchorView: NSView { badgeContent }
+
+    var onClickBadge: (() -> Void)? {
+        didSet { badgeContent.onClickBadge = onClickBadge }
+    }
+
+    var onOriginSaved: ((NSPoint) -> Void)? {
+        didSet { badgeContent.onOriginSaved = onOriginSaved }
+    }
+
+    init(initialOrigin: NSPoint) {
+        let rect = NSRect(origin: initialOrigin, size: NSSize(width: 104, height: 30))
+        super.init(
+            contentRect: rect,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        isFloatingPanel = true
+        level = .statusBar
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        hidesOnDeactivate = false
+        isReleasedWhenClosed = false
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        appearance = NSAppearance(named: .aqua)
+        contentView = badgeContent
+    }
+
+    func updateBadge(sprite: NSImage, amountText: String, state: AgentRunState) {
+        badgeContent.update(sprite: sprite, amountText: amountText, state: state)
+    }
 }

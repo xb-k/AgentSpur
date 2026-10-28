@@ -16,8 +16,10 @@ let package = Package(
             path: "Sources/AgentSpur",
             linkerSettings: [
                 .linkedFramework("AppKit"),
+                .linkedFramework("SwiftUI"),
                 .linkedFramework("CoreServices"),
                 .linkedFramework("QuartzCore"),
+                .linkedFramework("ServiceManagement"),
                 .linkedFramework("UniformTypeIdentifiers"),
                 .linkedFramework("UserNotifications"),
                 .linkedLibrary("sqlite3")

@@ -29,7 +29,7 @@ export const AgentSpurLogo: React.FC<AgentSpurLogoProps> = ({
         viewBox="0 0 24 24"
         fill="none"
         aria-hidden="true"
-        className={`shrink-0 ${className}`}
+        className={`aspect-square shrink-0 select-none ${className}`}
       >
         <defs>
           <linearGradient
@@ -67,7 +67,7 @@ export const AgentSpurLogo: React.FC<AgentSpurLogoProps> = ({
       viewBox="0 0 24 24"
       fill="none"
       aria-hidden="true"
-      className={`shrink-0 ${className}`}
+      className={`aspect-square shrink-0 select-none ${className}`}
     >
       <defs>
         <linearGradient

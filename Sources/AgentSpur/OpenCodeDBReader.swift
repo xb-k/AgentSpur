@@ -8,16 +8,43 @@ struct OpenCodeDBSnapshot: Equatable {
     let topStateEnteredAtMs: Int64
     let todayHourlySeries: [TodayHourlyPoint]
     let billing: BillingTelemetrySummary
+    let availableKeyScopes: [KeyScopedTelemetry]
+    let effectiveProfiles: [APIKeyProfile]
     let realWindows: [RealTerminalWindow]
     let activeDbFileName: String
     let dbExists: Bool
+
+    /// O(1) (<0.1ms) 按 API-Key 提取预聚合账单、分时趋势与会话列表，切换下拉菜单绝不重扫 opencode.db
+    func scoped(for keyId: String) -> KeyScopedTelemetry {
+        if keyId == APIKeyProfile.allKeysId {
+            return KeyScopedTelemetry(
+                keyId: APIKeyProfile.allKeysId,
+                title: "全部 Key",
+                billing: billing,
+                todayHourlySeries: todayHourlySeries,
+                masters: masters
+            )
+        }
+        if let hit = availableKeyScopes.first(where: { $0.keyId == keyId }) {
+            return hit
+        }
+        return KeyScopedTelemetry(
+            keyId: APIKeyProfile.allKeysId,
+            title: "全部 Key",
+            billing: billing,
+            todayHourlySeries: todayHourlySeries,
+            masters: masters
+        )
+    }
 }
 
 final class OpenCodeDBReader {
     let opencodeDirPath: String
+    private let localCacheDbPath: String
 
     // 缓存每个会话/子任务上一次的状态与进入该状态的时间戳，确保状态切换时计时自动从 0s 重置
     private var trackedStates: [String: (state: AgentRunState, enteredAtMs: Int64)] = [:]
+    private var syncedCacheMsgIds = Set<String>()
     private var hasInitializedBaseline = false
 
     init() {
@@ -29,6 +56,42 @@ final class OpenCodeDBReader {
         } else {
             self.opencodeDirPath = ("~/.local/share/opencode" as NSString).expandingTildeInPath
         }
+
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: ("~/Library/Application Support" as NSString).expandingTildeInPath)
+        let spurDir = appSupport.appendingPathComponent("AgentSpur", isDirectory: true)
+        try? FileManager.default.createDirectory(at: spurDir, withIntermediateDirectories: true)
+        self.localCacheDbPath = spurDir.appendingPathComponent("telemetry_cache.sqlite").path
+        ensureLocalIndexedCacheSchema()
+    }
+
+    /// 在 AgentSpur 自有缓存库建立 (api_key, timestamp) 复合索引（绝不修改只读的 opencode.db）
+    private func ensureLocalIndexedCacheSchema() {
+        var cacheDb: OpaquePointer?
+        let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX
+        guard sqlite3_open_v2(localCacheDbPath, &cacheDb, flags, nil) == SQLITE_OK, let cacheDb else {
+            if cacheDb != nil { sqlite3_close(cacheDb) }
+            return
+        }
+        defer { sqlite3_close(cacheDb) }
+
+        let ddl = """
+        PRAGMA journal_mode = WAL;
+        PRAGMA synchronous = NORMAL;
+        CREATE TABLE IF NOT EXISTS usage_logs (
+            msg_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            api_key TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            model_id TEXT NOT NULL,
+            hit_tokens INTEGER NOT NULL,
+            miss_tokens INTEGER NOT NULL,
+            out_tokens INTEGER NOT NULL,
+            cost_cny REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_key_time ON usage_logs(api_key, timestamp);
+        """
+        _ = sqlite3_exec(cacheDb, ddl, nil, nil, nil)
     }
 
     /// 自动定位当前最新活跃的 opencode 数据库文件（支持 $OPENCODE_DB、opencode.db、opencode-stable.db 等通道库及 -wal 活跃度判断）
@@ -70,8 +133,9 @@ final class OpenCodeDBReader {
 
     func readSnapshot(
         usdToCnyRate: Double,
+        configuredProfiles: [APIKeyProfile],
         realWindows: [RealTerminalWindow],
-        onTaskJustCompleted: ((String) -> Void)?
+        onNotificationEvent: ((AgentNotificationEvent) -> Void)?
     ) -> OpenCodeDBSnapshot {
         let now = Date()
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
@@ -85,6 +149,24 @@ final class OpenCodeDBReader {
             dateLabel: TimeFormatters.todayShortLabel(),
             tier: defaultTier
         )
+        let emptyHourly = buildEmptyHourlySeries(todayStartDate: todayStartDate, currentHour: currentHour)
+        let preDbDiscovered = discoverProfilesFromFilesAndEnv(
+            candidateDirectories: [],
+            activeProviderHints: []
+        )
+        let fallbackProfiles = mergeDiscoveredAndManualProfiles(
+            discovered: preDbDiscovered,
+            manual: configuredProfiles
+        )
+        let emptyScopes = fallbackProfiles.map {
+            KeyScopedTelemetry(
+                keyId: $0.id,
+                title: $0.displayTitle,
+                billing: emptyBilling,
+                todayHourlySeries: emptyHourly,
+                masters: []
+            )
+        }
 
         guard let dbPath = resolveActiveDatabasePath() else {
             return OpenCodeDBSnapshot(
@@ -92,8 +174,10 @@ final class OpenCodeDBReader {
                 urgentSubTask: nil,
                 topState: .completed,
                 topStateEnteredAtMs: nowMs,
-                todayHourlySeries: buildEmptyHourlySeries(todayStartDate: todayStartDate, currentHour: currentHour),
+                todayHourlySeries: emptyHourly,
                 billing: emptyBilling,
+                availableKeyScopes: emptyScopes,
+                effectiveProfiles: fallbackProfiles,
                 realWindows: realWindows,
                 activeDbFileName: "opencode.db",
                 dbExists: false
@@ -103,33 +187,18 @@ final class OpenCodeDBReader {
         let activeDbName = (dbPath as NSString).lastPathComponent
 
         var db: OpaquePointer?
-        let rwFlags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX
         let roFlags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
-        if sqlite3_open_v2(dbPath, &db, rwFlags, nil) != SQLITE_OK {
-            if db != nil { sqlite3_close(db); db = nil }
-            guard sqlite3_open_v2(dbPath, &db, roFlags, nil) == SQLITE_OK else {
-                if db != nil { sqlite3_close(db) }
-                return OpenCodeDBSnapshot(
-                    masters: [],
-                    urgentSubTask: nil,
-                    topState: .completed,
-                    topStateEnteredAtMs: nowMs,
-                    todayHourlySeries: buildEmptyHourlySeries(todayStartDate: todayStartDate, currentHour: currentHour),
-                    billing: emptyBilling,
-                    realWindows: realWindows,
-                    activeDbFileName: activeDbName,
-                    dbExists: true
-                )
-            }
-        }
-        guard let db else {
+        guard sqlite3_open_v2(dbPath, &db, roFlags, nil) == SQLITE_OK, let db else {
+            if db != nil { sqlite3_close(db) }
             return OpenCodeDBSnapshot(
                 masters: [],
                 urgentSubTask: nil,
                 topState: .completed,
                 topStateEnteredAtMs: nowMs,
-                todayHourlySeries: buildEmptyHourlySeries(todayStartDate: todayStartDate, currentHour: currentHour),
+                todayHourlySeries: emptyHourly,
                 billing: emptyBilling,
+                availableKeyScopes: emptyScopes,
+                effectiveProfiles: fallbackProfiles,
                 realWindows: realWindows,
                 activeDbFileName: activeDbName,
                 dbExists: true
@@ -147,8 +216,10 @@ final class OpenCodeDBReader {
                 urgentSubTask: nil,
                 topState: .completed,
                 topStateEnteredAtMs: nowMs,
-                todayHourlySeries: buildEmptyHourlySeries(todayStartDate: todayStartDate, currentHour: currentHour),
+                todayHourlySeries: emptyHourly,
                 billing: emptyBilling,
+                availableKeyScopes: emptyScopes,
+                effectiveProfiles: fallbackProfiles,
                 realWindows: realWindows,
                 activeDbFileName: activeDbName,
                 dbExists: true
@@ -159,13 +230,11 @@ final class OpenCodeDBReader {
         let hasPartTable = tableExists(db: db, name: "part")
         let hasPermissionTable = tableExists(db: db, name: "permission")
 
-        // Step 1: O(log N) 二分定位今日第一条 message 的 rowid，随后走主键范围扫描今日 100% 全量消息（零扫全表，同时不漏任何归档或超量会话！）
+        // Step 1: O(log N) 二分定位今日第一条 message 的 rowid，单趟扫描今日全量消息
         let todayBillingScan = scanAllTodayMessagesViaRowIdBinarySearch(
             db: db,
             hasMessageTable: hasMessageTable,
-            todayStartDate: todayStartDate,
             todayStartMs: todayStartMs,
-            currentHour: currentHour,
             usdToCnyRate: usdToCnyRate
         )
 
@@ -190,14 +259,83 @@ final class OpenCodeDBReader {
             ids: &candidateSessionIds
         )
 
-        // Step 3: 批量获取活跃会话元数据（包括已归档子任务以便把开销准确汇总到主会话，列表展示则过滤已归档顶层旧会话）
+        // Step 3: 批量获取活跃会话元数据
         let rawSessions = fetchSessionMetadata(
             db: db,
             sessionCols: sessionCols,
             sessionIds: Array(candidateSessionIds)
         )
 
-        // Step 4: 对尚未被今日消息覆盖到的候选会话补齐最新一条消息，确保运行状态与模型名 100% 准确
+        // Step 3.5: 自动从 opencode.db 内部凭据表 + 同级 auth.json + opencode.json + 会话项目配置只读提取 API-Key 与通道
+        var candidateDirs: [String] = []
+        for meta in rawSessions.values where !meta.directory.isEmpty {
+            if !candidateDirs.contains(meta.directory) {
+                candidateDirs.append(meta.directory)
+            }
+        }
+        for projDir in queryProjectWorktrees(db: db) where !projDir.isEmpty {
+            if !candidateDirs.contains(projDir) {
+                candidateDirs.append(projDir)
+            }
+        }
+
+        var activeHints = Set(todayBillingScan.sessionProviderHint.values.filter { !$0.isEmpty })
+        if hasMessageTable {
+            activeHints.formUnion(queryRecentMessageProviderHints(db: db, limit: 360))
+        }
+
+        let autoDiscovered = discoverOpenCodeProfiles(
+            db: db,
+            activeDbName: activeDbName,
+            candidateDirectories: Array(candidateDirs.prefix(12)),
+            activeProviderHints: activeHints
+        )
+        let effectiveProfiles = mergeDiscoveredAndManualProfiles(
+            discovered: autoDiscovered,
+            manual: configuredProfiles
+        )
+
+        // Step 4: 为每个会话归属对应的 API-Key 分组（支持按目录/ProviderID/Key指纹自动匹配多 Key）
+        var sessionToKeyBucket: [String: (id: String, title: String)] = [:]
+        let defaultProfile = effectiveProfiles.first(where: { $0.directoryKeyword.trimmingCharacters(in: .whitespaces).isEmpty })
+            ?? effectiveProfiles.first
+
+        func resolveRootDirectoryAndTitle(for sessId: String) -> (dir: String, title: String) {
+            guard let m = rawSessions[sessId] else { return ("", "") }
+            if let pid = m.parentId, let parent = rawSessions[pid] {
+                let effDir = m.directory.isEmpty ? parent.directory : m.directory
+                return (effDir, "\(parent.title) \(m.title)")
+            }
+            return (m.directory, m.title)
+        }
+
+        for sId in rawSessions.keys {
+            let info = resolveRootDirectoryAndTitle(for: sId)
+            let providerHint = todayBillingScan.sessionProviderHint[sId] ?? ""
+            let bucket = matchKeyBucket(
+                directory: info.dir,
+                title: info.title,
+                providerHint: providerHint,
+                configuredProfiles: effectiveProfiles,
+                defaultProfile: defaultProfile
+            )
+            sessionToKeyBucket[sId] = bucket
+        }
+
+        // 将今日新消息增量写入带 idx_usage_key_time 索引的本地缓存库，并在内存一次完成全局 + 多 Key 预聚合
+        let aggregated = aggregateGlobalAndPerKeyTelemetry(
+            records: todayBillingScan.billedRecords,
+            sessionToKeyBucket: sessionToKeyBucket,
+            configuredProfiles: effectiveProfiles,
+            todayStartDate: todayStartDate,
+            currentHour: currentHour
+        )
+        syncNewRecordsToLocalIndexedCache(
+            records: todayBillingScan.billedRecords,
+            sessionToKeyBucket: sessionToKeyBucket
+        )
+
+        // Step 5: 对尚未被今日消息覆盖到的候选会话补齐最新一条消息
         var latestMsgPerSession = todayBillingScan.latestMsgPerSession
         var lastCompletedDurPerSession = todayBillingScan.lastCompletedDurPerSession
         let missingMsgSessionIds = rawSessions.keys.filter { latestMsgPerSession[$0] == nil }
@@ -220,9 +358,10 @@ final class OpenCodeDBReader {
             nowMs: nowMs
         )
 
-        // Step 5: 处理每个会话的状态切换计时重置与完成通知
+        // Step 6: 处理状态流转计时与完成/待确认/报错通知（仅顶层主任务或关键确认触发通知，避免子任务刷屏）
         struct ResolvedSession {
             let meta: RawSessionMeta
+            let keyBucketId: String
             var state: AgentRunState
             var enteredAtMs: Int64
             let durationSec: Int64?
@@ -245,14 +384,21 @@ final class OpenCodeDBReader {
             let derivedState = msgState?.state ?? .completed
             let rawStateTime = msgState?.stateTimeMs ?? meta.updatedMs
             let dbTimestamp = rawStateTime > 0 ? rawStateTime : nowMs
+            let isTopLevel = (meta.parentId == nil || rawSessions[meta.parentId ?? ""] == nil)
 
             let effectiveEnteredAtMs: Int64
             if let prev = trackedStates[id] {
                 if prev.state != derivedState {
                     effectiveEnteredAtMs = nowMs
                     trackedStates[id] = (derivedState, nowMs)
-                    if hasInitializedBaseline && prev.state != .completed && derivedState == .completed {
-                        onTaskJustCompleted?(meta.title)
+                    if hasInitializedBaseline {
+                        if isTopLevel && prev.state.isActiveRunning && derivedState == .completed {
+                            onNotificationEvent?(AgentNotificationEvent(kind: .completed, taskTitle: meta.title))
+                        } else if derivedState == .confirm && prev.state != .confirm {
+                            onNotificationEvent?(AgentNotificationEvent(kind: .confirmNeeded, taskTitle: meta.title))
+                        } else if isTopLevel && prev.state.isActiveRunning && derivedState == .error {
+                            onNotificationEvent?(AgentNotificationEvent(kind: .errorOccurred, taskTitle: meta.title))
+                        }
                     }
                 } else {
                     effectiveEnteredAtMs = prev.enteredAtMs
@@ -263,8 +409,10 @@ final class OpenCodeDBReader {
             }
 
             let sBill = todayBillingScan.perSessionBilling[id]
+            let kId = sessionToKeyBucket[id]?.id ?? (defaultProfile?.id ?? "key-default")
             resolvedMap[id] = ResolvedSession(
                 meta: meta,
+                keyBucketId: kId,
                 state: derivedState,
                 enteredAtMs: effectiveEnteredAtMs,
                 durationSec: msgState?.lastCompletedDurationSec,
@@ -284,7 +432,7 @@ final class OpenCodeDBReader {
 
         hasInitializedBaseline = true
 
-        // Step 6: 组装 Master 与 Sub-Agent 树，确保任何运行中的子任务绝对优先于已停止的报错子任务冒泡至 Master！
+        // Step 7: 组装 Master 与 Sub-Agent 树
         let sortedIds = resolvedMap.keys.sorted { a, b in
             let ua = resolvedMap[a]?.meta.updatedMs ?? 0
             let ub = resolvedMap[b]?.meta.updatedMs ?? 0
@@ -299,7 +447,6 @@ final class OpenCodeDBReader {
             if let pid = item.meta.parentId, resolvedMap[pid] != nil {
                 continue
             }
-            // 已归档且当前不在运行的旧顶层会话不挤占列表（但其今日账单已在 Step 1 完整计入全局今日精算）
             if item.meta.isArchived && !item.state.isActiveRunning {
                 continue
             }
@@ -333,7 +480,7 @@ final class OpenCodeDBReader {
                 } else if child.meta.title.contains("@dev") {
                     roleStr = "@dev"
                 } else {
-                    roleStr = "@subagent"
+                    roleStr = "@sub"
                 }
 
                 let effDir = child.meta.directory.isEmpty ? item.meta.directory : child.meta.directory
@@ -349,6 +496,7 @@ final class OpenCodeDBReader {
                     title: child.meta.title,
                     roleLabel: roleStr,
                     directory: effDir,
+                    apiKeyBucket: item.keyBucketId,
                     state: child.state,
                     stateEnteredAtMs: child.enteredAtMs,
                     completedDurationSec: child.durationSec,
@@ -367,7 +515,6 @@ final class OpenCodeDBReader {
                 allSubTasks.append(sub)
             }
 
-            // 将子任务按“运行中排最前 -> 最新时间”排序
             subs.sort { a, b in
                 if a.state.isActiveRunning != b.state.isActiveRunning {
                     return a.state.isActiveRunning && !b.state.isActiveRunning
@@ -378,11 +525,12 @@ final class OpenCodeDBReader {
                 return a.stateEnteredAtMs > b.stateEnteredAtMs
             }
 
-            // 冒泡逻辑：只要任一子任务正在运行 (.confirm=50 / .working=40 / .thinking=30)，就绝对覆盖主会话或其它兄弟子任务的旧 .error(20)！
             var effectiveMasterState = item.state
             var effectiveMasterEnteredMs = item.enteredAtMs
             var bestRank = effectiveMasterState.activeFirstRank
-            for sub in subs {
+            // 仅当子代理正在活跃运行（思考/工作/待确认）时才向上提升主会话状态；
+            // 已结束的历史子代理中断或局部报错不应污染已正常完成的主会话。
+            for sub in subs where sub.state.isActiveRunning {
                 let r = sub.state.activeFirstRank
                 if r > bestRank {
                     bestRank = r
@@ -413,6 +561,7 @@ final class OpenCodeDBReader {
                 title: item.meta.title,
                 modelName: item.modelName,
                 directory: item.meta.directory,
+                apiKeyBucket: item.keyBucketId,
                 state: effectiveMasterState,
                 stateEnteredAtMs: effectiveMasterEnteredMs,
                 completedDurationSec: item.durationSec,
@@ -432,7 +581,6 @@ final class OpenCodeDBReader {
             masters.append(master)
         }
 
-        // 将正在运行的会话排在最前
         masters.sort { a, b in
             if a.state.isActiveRunning != b.state.isActiveRunning {
                 return a.state.isActiveRunning && !b.state.isActiveRunning
@@ -441,6 +589,18 @@ final class OpenCodeDBReader {
                 return a.state.activeFirstRank > b.state.activeFirstRank
             }
             return a.stateEnteredAtMs > b.stateEnteredAtMs
+        }
+
+        // 将过滤好的会话绑定进各 Key 预聚合分片，供前端 <0.1ms 无感切换
+        let finalizedKeyScopes: [KeyScopedTelemetry] = aggregated.keyScopes.map { scope in
+            let scopedMasters = masters.filter { $0.apiKeyBucket == scope.keyId }
+            return KeyScopedTelemetry(
+                keyId: scope.keyId,
+                title: scope.title,
+                billing: scope.billing,
+                todayHourlySeries: scope.todayHourlySeries,
+                masters: scopedMasters
+            )
         }
 
         let urgentSubTask: SubTaskItem? = allSubTasks.max { a, b in
@@ -455,6 +615,7 @@ final class OpenCodeDBReader {
                 title: m.title,
                 roleLabel: "@master",
                 directory: m.directory,
+                apiKeyBucket: m.apiKeyBucket,
                 state: m.state,
                 stateEnteredAtMs: m.stateEnteredAtMs,
                 completedDurationSec: m.completedDurationSec,
@@ -473,14 +634,20 @@ final class OpenCodeDBReader {
 
         var topState: AgentRunState = .completed
         var topEnteredMs: Int64 = nowMs
-        var bestTopRank = -1
-        for m in masters {
-            let r = m.state.activeFirstRank
-            if r > bestTopRank {
-                bestTopRank = r
-                topState = m.state
-                topEnteredMs = m.stateEnteredAtMs
+        if let activeMaster = masters.first(where: { $0.state.isActiveRunning }) {
+            var bestActive = activeMaster
+            for m in masters where m.state.isActiveRunning {
+                if m.state.activeFirstRank > bestActive.state.activeFirstRank {
+                    bestActive = m
+                }
             }
+            topState = bestActive.state
+            topEnteredMs = bestActive.stateEnteredAtMs
+        } else if let latestMaster = masters.first,
+                  latestMaster.state == .error,
+                  (nowMs - latestMaster.stateEnteredAtMs) < 10 * 60 * 1000 {
+            topState = .error
+            topEnteredMs = latestMaster.stateEnteredAtMs
         }
 
         return OpenCodeDBSnapshot(
@@ -488,12 +655,281 @@ final class OpenCodeDBReader {
             urgentSubTask: urgentSubTask,
             topState: topState,
             topStateEnteredAtMs: topEnteredMs,
-            todayHourlySeries: todayBillingScan.hourlyPoints,
-            billing: todayBillingScan.globalBilling,
+            todayHourlySeries: aggregated.globalHourly,
+            billing: aggregated.globalBilling,
+            availableKeyScopes: finalizedKeyScopes,
+            effectiveProfiles: effectiveProfiles,
             realWindows: realWindows,
             activeDbFileName: activeDbName,
             dbExists: true
         )
+    }
+
+    // MARK: - API-Key Bucket Matching & Local Indexed Cache Sync
+
+    private func matchKeyBucket(
+        directory: String,
+        title: String,
+        providerHint: String,
+        configuredProfiles: [APIKeyProfile],
+        defaultProfile: APIKeyProfile?
+    ) -> (id: String, title: String) {
+        let lowerDir = (directory as NSString).expandingTildeInPath.lowercased()
+        let haystack = "\(lowerDir) \(directory.lowercased()) \(title.lowercased()) \(providerHint.lowercased())"
+
+        // 1. 优先匹配配置了工作目录或项目路径关键词的专属 Key
+        for profile in configuredProfiles {
+            let rawKw = profile.directoryKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !rawKw.isEmpty else { continue }
+            let expandedKw = (rawKw as NSString).expandingTildeInPath.lowercased()
+            let plainKw = rawKw.lowercased()
+            if (!lowerDir.isEmpty && lowerDir.contains(expandedKw)) || haystack.contains(plainKw) {
+                return (profile.id, profile.displayTitle)
+            }
+        }
+
+        // 2. 按 opencode.db 消息中的 providerID / apiKeyName / keyID 精确关联自动读取或手动配置的 Key
+        let trimmedHint = providerHint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedHint.isEmpty {
+            let lowerHint = trimmedHint.lowercased()
+            let maskedHint = APIKeyProfile.makeMasked(trimmedHint).lowercased()
+            if let matched = configuredProfiles.first(where: { prof in
+                (!prof.providerId.isEmpty && prof.providerId.lowercased() == lowerHint)
+                    || prof.name.lowercased() == lowerHint
+                    || (!prof.maskedKey.isEmpty && (prof.maskedKey.lowercased() == lowerHint || prof.maskedKey.lowercased() == maskedHint))
+                    || (!prof.rawApiKey.isEmpty && prof.rawApiKey == trimmedHint)
+            }) {
+                return (matched.id, matched.displayTitle)
+            }
+
+            if lowerHint != "deepseek" {
+                let bucketId = "channel:\(lowerHint)"
+                return (bucketId, "通道 · \(trimmedHint)")
+            }
+        }
+
+        // 3. 归入默认主 Key
+        if let def = defaultProfile {
+            return (def.id, def.displayTitle)
+        }
+        return ("key-default", "默认主Key")
+    }
+
+    private struct BilledMessageRecord {
+        let msgId: String
+        let sessionId: String
+        let createdMs: Int64
+        let modelId: String
+        let hitTokens: Int64
+        let missTokens: Int64
+        let cacheWriteTokens: Int64
+        let outTokens: Int64
+        let reasoningTokens: Int64
+        let rawUsd: Double
+        let breakdown: DeepSeekPricingEngine.RequestCostBreakdown
+    }
+
+    private struct BucketAccumulator {
+        var id: String
+        var title: String
+        var hit: Int64 = 0
+        var miss: Int64 = 0
+        var cacheWrite: Int64 = 0
+        var out: Int64 = 0
+        var reasoning: Int64 = 0
+        var reqs: Int = 0
+        var offPeakReqs: Int = 0
+        var spurCny: Double = 0.0
+        var peakCostCny: Double = 0.0
+        var offPeakCostCny: Double = 0.0
+        var hitCostCny: Double = 0.0
+        var missCostCny: Double = 0.0
+        var outCostCny: Double = 0.0
+        var cacheSavedCny: Double = 0.0
+        var offPeakSavedCny: Double = 0.0
+        var openCodeUsd: Double = 0.0
+        var modelFreq: [String: Int] = [:]
+        var hourlyReqs = Array(repeating: 0, count: 24)
+        var hourlyCosts = Array(repeating: 0.0, count: 24)
+        var hourlyHits = Array(repeating: Int64(0), count: 24)
+        var hourlyTotalIns = Array(repeating: Int64(0), count: 24)
+
+        mutating func ingest(_ rec: BilledMessageRecord, hour: Int) {
+            hit += rec.hitTokens
+            miss += rec.missTokens
+            cacheWrite += rec.cacheWriteTokens
+            out += rec.outTokens
+            reasoning += rec.reasoningTokens
+            reqs += 1
+            if rec.breakdown.isOffPeak {
+                offPeakReqs += 1
+                offPeakCostCny += rec.breakdown.totalCostCny
+            } else {
+                peakCostCny += rec.breakdown.totalCostCny
+            }
+            spurCny += rec.breakdown.totalCostCny
+            hitCostCny += rec.breakdown.hitCostCny
+            missCostCny += rec.breakdown.missCostCny
+            outCostCny += rec.breakdown.outputCostCny
+            cacheSavedCny += rec.breakdown.cacheSavedCny
+            offPeakSavedCny += rec.breakdown.offPeakSavedCny
+            openCodeUsd += rec.rawUsd
+            modelFreq[rec.modelId, default: 0] += 1
+
+            let h = max(0, min(23, hour))
+            hourlyReqs[h] += 1
+            hourlyCosts[h] += rec.breakdown.totalCostCny
+            hourlyHits[h] += rec.hitTokens
+            hourlyTotalIns[h] += (rec.hitTokens + rec.missTokens)
+        }
+
+        func buildBilling(dateLabel: String) -> BillingTelemetrySummary {
+            let domModel = modelFreq.max(by: { $0.value < $1.value })?.key ?? "deepseek-flash"
+            let tier = DeepSeekPricingEngine.classifyModel(domModel)
+            return BillingTelemetrySummary(
+                dateLabel: dateLabel,
+                dominantModelId: tier.canonicalModelId,
+                dominantModelSpec: tier.specSummary,
+                inputCacheHitTokens: hit,
+                inputCacheMissTokens: miss,
+                cacheWriteTokens: cacheWrite,
+                outputTokens: out,
+                reasoningTokens: reasoning,
+                requestCount: reqs,
+                offPeakRequestCount: offPeakReqs,
+                spurCostCny: spurCny,
+                peakCostCny: peakCostCny,
+                offPeakCostCny: offPeakCostCny,
+                cacheHitCostCny: hitCostCny,
+                cacheMissCostCny: missCostCny,
+                outputCostCny: outCostCny,
+                cacheSavedCny: cacheSavedCny,
+                offPeakSavedCny: offPeakSavedCny,
+                opencodeRawUsd: openCodeUsd
+            )
+        }
+
+        func buildHourly(todayStartDate: Date, currentHour: Int) -> [TodayHourlyPoint] {
+            return (0..<24).map { hr in
+                let totIn = hourlyTotalIns[hr]
+                let hitPct = totIn > 0 ? (Double(hourlyHits[hr]) / Double(totIn)) * 100.0 : 0.0
+                let hourDate = todayStartDate.addingTimeInterval(Double(hr) * 3600.0 + 60.0)
+                let isPeak = (DeepSeekPricingEngine.priceWindow(at: hourDate) == .peak)
+                return TodayHourlyPoint(
+                    hour: hr,
+                    hourLabel: String(format: "%02d", hr),
+                    requestCount: hourlyReqs[hr],
+                    costCny: hourlyCosts[hr],
+                    cacheHitPercent: hitPct,
+                    isPeakHour: isPeak,
+                    isCurrentHour: hr == currentHour
+                )
+            }
+        }
+    }
+
+    private func aggregateGlobalAndPerKeyTelemetry(
+        records: [BilledMessageRecord],
+        sessionToKeyBucket: [String: (id: String, title: String)],
+        configuredProfiles: [APIKeyProfile],
+        todayStartDate: Date,
+        currentHour: Int
+    ) -> (globalBilling: BillingTelemetrySummary, globalHourly: [TodayHourlyPoint], keyScopes: [KeyScopedTelemetry]) {
+        let dateLabel = TimeFormatters.todayShortLabel()
+        let localCal = Calendar.current
+
+        var globalAcc = BucketAccumulator(id: APIKeyProfile.allKeysId, title: "全部 Key")
+        var keyAccMap: [String: BucketAccumulator] = [:]
+        var orderedKeyIds: [String] = []
+
+        for p in configuredProfiles {
+            keyAccMap[p.id] = BucketAccumulator(id: p.id, title: p.displayTitle)
+            orderedKeyIds.append(p.id)
+        }
+
+        let fallbackId = configuredProfiles.first?.id ?? "key-default"
+        let fallbackTitle = configuredProfiles.first?.displayTitle ?? "默认主Key"
+
+        for rec in records {
+            let msgDate = Date(timeIntervalSince1970: Double(rec.createdMs) / 1000.0)
+            let hr = localCal.component(.hour, from: msgDate)
+            globalAcc.ingest(rec, hour: hr)
+
+            let bucket = sessionToKeyBucket[rec.sessionId] ?? (fallbackId, fallbackTitle)
+            if keyAccMap[bucket.id] == nil {
+                keyAccMap[bucket.id] = BucketAccumulator(id: bucket.id, title: bucket.title)
+                orderedKeyIds.append(bucket.id)
+            }
+            keyAccMap[bucket.id]?.ingest(rec, hour: hr)
+        }
+
+        if orderedKeyIds.isEmpty {
+            let defAcc = BucketAccumulator(id: "key-default", title: "默认主Key")
+            keyAccMap["key-default"] = defAcc
+            orderedKeyIds.append("key-default")
+        }
+
+        let scopes: [KeyScopedTelemetry] = orderedKeyIds.compactMap { kId in
+            guard let acc = keyAccMap[kId] else { return nil }
+            return KeyScopedTelemetry(
+                keyId: acc.id,
+                title: acc.title,
+                billing: acc.buildBilling(dateLabel: dateLabel),
+                todayHourlySeries: acc.buildHourly(todayStartDate: todayStartDate, currentHour: currentHour),
+                masters: []
+            )
+        }
+
+        return (
+            globalAcc.buildBilling(dateLabel: dateLabel),
+            globalAcc.buildHourly(todayStartDate: todayStartDate, currentHour: currentHour),
+            scopes
+        )
+    }
+
+    private func syncNewRecordsToLocalIndexedCache(
+        records: [BilledMessageRecord],
+        sessionToKeyBucket: [String: (id: String, title: String)]
+    ) {
+        let unsynced = records.filter { !$0.msgId.isEmpty && !syncedCacheMsgIds.contains($0.msgId) }
+        guard !unsynced.isEmpty else { return }
+
+        var cacheDb: OpaquePointer?
+        let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX
+        guard sqlite3_open_v2(localCacheDbPath, &cacheDb, flags, nil) == SQLITE_OK, let cacheDb else {
+            if cacheDb != nil { sqlite3_close(cacheDb) }
+            return
+        }
+        defer { sqlite3_close(cacheDb) }
+
+        _ = sqlite3_exec(cacheDb, "BEGIN IMMEDIATE TRANSACTION;", nil, nil, nil)
+        let sql = """
+        INSERT OR REPLACE INTO usage_logs
+        (msg_id, session_id, api_key, timestamp, model_id, hit_tokens, miss_tokens, out_tokens, cost_cny)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """
+        let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(cacheDb, sql, -1, &stmt, nil) == SQLITE_OK, let stmt {
+            for rec in unsynced {
+                sqlite3_reset(stmt)
+                sqlite3_clear_bindings(stmt)
+                let keyId = sessionToKeyBucket[rec.sessionId]?.id ?? "key-default"
+                _ = rec.msgId.withCString { sqlite3_bind_text(stmt, 1, $0, -1, sqliteTransient) }
+                _ = rec.sessionId.withCString { sqlite3_bind_text(stmt, 2, $0, -1, sqliteTransient) }
+                _ = keyId.withCString { sqlite3_bind_text(stmt, 3, $0, -1, sqliteTransient) }
+                sqlite3_bind_int64(stmt, 4, rec.createdMs)
+                _ = rec.modelId.withCString { sqlite3_bind_text(stmt, 5, $0, -1, sqliteTransient) }
+                sqlite3_bind_int64(stmt, 6, rec.hitTokens)
+                sqlite3_bind_int64(stmt, 7, rec.missTokens)
+                sqlite3_bind_int64(stmt, 8, rec.outTokens)
+                sqlite3_bind_double(stmt, 9, rec.breakdown.totalCostCny)
+                _ = sqlite3_step(stmt)
+                syncedCacheMsgIds.insert(rec.msgId)
+            }
+            sqlite3_finalize(stmt)
+        }
+        _ = sqlite3_exec(cacheDb, "COMMIT;", nil, nil, nil)
     }
 
     // MARK: - O(log N) RowId Binary Search + Exact Token Deduplication Engine
@@ -542,15 +978,15 @@ final class OpenCodeDBReader {
     }
 
     private struct TodayMessageScanResult {
-        let globalBilling: BillingTelemetrySummary
+        let billedRecords: [BilledMessageRecord]
         let perSessionBilling: [String: SessionBillingAcc]
+        let sessionProviderHint: [String: String]
         let touchedSessionIds: Set<String>
         let latestMsgPerSession: [String: LatestMsgRecord]
         let lastCompletedDurPerSession: [String: Int64]
-        let hourlyPoints: [TodayHourlyPoint]
     }
 
-    /// 用 SQLite B-Tree 主键 rowid 二分查找定位今日 00:00 起始行（耗时 <0.1ms），避免全表扫描同时保证今日全量消息 0 遗漏
+    /// 用 SQLite B-Tree 主键 rowid 二分查找定位今日 00:00 起始行（耗时 <0.1ms），零扫全表
     private func findFirstMessageRowIdOnOrAfter(db: OpaquePointer, targetMs: Int64) -> Int64 {
         var minRow: Int64 = 1
         var maxRow: Int64 = 0
@@ -598,59 +1034,34 @@ final class OpenCodeDBReader {
             }
         }
 
-        // 回退 800 行缓冲，防止并发子代理乱序落库漏算今日临界点消息
         return max(1, ans - 800)
     }
 
     private func scanAllTodayMessagesViaRowIdBinarySearch(
         db: OpaquePointer,
         hasMessageTable: Bool,
-        todayStartDate: Date,
         todayStartMs: Int64,
-        currentHour: Int,
         usdToCnyRate: Double
     ) -> TodayMessageScanResult {
         guard hasMessageTable else {
-            let defaultTier = DeepSeekPricingEngine.classifyModel("deepseek-flash")
             return TodayMessageScanResult(
-                globalBilling: BillingTelemetrySummary.empty(dateLabel: TimeFormatters.todayShortLabel(), tier: defaultTier),
+                billedRecords: [],
                 perSessionBilling: [:],
+                sessionProviderHint: [:],
                 touchedSessionIds: [],
                 latestMsgPerSession: [:],
-                lastCompletedDurPerSession: [:],
-                hourlyPoints: buildEmptyHourlySeries(todayStartDate: todayStartDate, currentHour: currentHour)
+                lastCompletedDurPerSession: [:]
             )
         }
 
         let startRowId = findFirstMessageRowIdOnOrAfter(db: db, targetMs: todayStartMs)
 
-        var totalHit: Int64 = 0
-        var totalMiss: Int64 = 0
-        var totalCacheWrite: Int64 = 0
-        var totalOut: Int64 = 0
-        var totalReasoning: Int64 = 0
-        var totalReqs: Int = 0
-        var offPeakReqs: Int = 0
-        var totalSpurCny: Double = 0.0
-        var totalPeakCostCny: Double = 0.0
-        var totalOffPeakCostCny: Double = 0.0
-        var totalHitCostCny: Double = 0.0
-        var totalMissCostCny: Double = 0.0
-        var totalOutCostCny: Double = 0.0
-        var totalCacheSavedCny: Double = 0.0
-        var totalOffPeakSavedCny: Double = 0.0
-        var totalOpenCodeUsd: Double = 0.0
-        var modelFreq: [String: Int] = [:]
-
+        var billedRecords: [BilledMessageRecord] = []
         var perSessionBilling: [String: SessionBillingAcc] = [:]
+        var sessionProviderHint: [String: String] = [:]
         var touchedSessionIds = Set<String>()
         var latestMsgPerSession: [String: LatestMsgRecord] = [:]
         var lastCompletedDurPerSession: [String: Int64] = [:]
-
-        var hourlyReqBuckets = Array(repeating: 0, count: 24)
-        var hourlyCostBuckets = Array(repeating: 0.0, count: 24)
-        var hourlyHitBuckets = Array(repeating: Int64(0), count: 24)
-        var hourlyTotalInBuckets = Array(repeating: Int64(0), count: 24)
 
         let sql = """
         SELECT
@@ -672,14 +1083,20 @@ final class OpenCodeDBReader {
             COALESCE(json_extract(data, '$.tokens.cache.write'), 0) AS cache_write,
             COALESCE(json_extract(data, '$.tokens.output'), 0) AS raw_out,
             COALESCE(json_extract(data, '$.tokens.reasoning'), 0) AS raw_reas,
-            COALESCE(json_extract(data, '$.cost'), 0.0) AS raw_usd
+            COALESCE(json_extract(data, '$.cost'), 0.0) AS raw_usd,
+            COALESCE(
+                json_extract(data, '$.apiKeyName'),
+                json_extract(data, '$.keyID'),
+                json_extract(data, '$.providerID'),
+                json_extract(data, '$.model.providerID'),
+                ''
+            ) AS key_hint
         FROM message
         WHERE rowid >= ?
         ORDER BY rowid ASC;
         """
 
         var stmt: OpaquePointer?
-        let localCal = Calendar.current
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt {
             sqlite3_bind_int64(stmt, 1, startRowId)
 
@@ -696,6 +1113,11 @@ final class OpenCodeDBReader {
                 let hasErr = sqlite3_column_int64(stmt, 5) != 0
                 let modelId = colString(stmt, 6) ?? "deepseek-flash"
                 let agentName = colString(stmt, 7) ?? ""
+                let keyHint = colString(stmt, 15) ?? ""
+
+                if !keyHint.isEmpty {
+                    sessionProviderHint[sessId] = keyHint
+                }
 
                 latestMsgPerSession[sessId] = LatestMsgRecord(
                     msgId: msgId,
@@ -711,7 +1133,6 @@ final class OpenCodeDBReader {
                     lastCompletedDurPerSession[sessId] = max(1, (compMs - createdMs) / 1000)
                 }
 
-                // 严格只统计【今日 00:00 起】产生的消息
                 guard createdMs >= todayStartMs else { continue }
                 touchedSessionIds.insert(sessId)
 
@@ -725,7 +1146,6 @@ final class OpenCodeDBReader {
                 let rawReas = max(0, sqlite3_column_int64(stmt, 13))
                 let rawUsd = max(0.0, sqlite3_column_double(stmt, 14))
 
-                // 精确推导未命中输入 Token (防止个别适配器未从 input 扣除 cache.read 造成重复计费)
                 let uncachedIn: Int64
                 if tokTotal > 0 && hit > 0 && rawIn >= hit {
                     let sumIfExcluded = hit + rawIn + cacheWrite + rawOut
@@ -740,9 +1160,6 @@ final class OpenCodeDBReader {
                 }
                 let miss = uncachedIn + cacheWrite
 
-                // 精确推导计费输出 Token：
-                // OpenCode 1.18+ 在 getUsage() 中已将 output 与 reasoning 拆分为互斥桶，且 tokens.total = hit + miss + output + reasoning；
-                // 若遇到自定义兼容网关在 output 中已含 reasoning 但 total 仍按真实总长返回，通过与 tokens.total 对账自动去重，绝不双计！
                 let promptSum = hit + miss
                 let billedOut: Int64
                 if tokTotal > promptSum {
@@ -766,26 +1183,19 @@ final class OpenCodeDBReader {
                     usdToCnyRate: usdToCnyRate
                 )
 
-                totalHit += hit
-                totalMiss += miss
-                totalCacheWrite += cacheWrite
-                totalOut += billedOut
-                totalReasoning += min(billedOut, rawReas)
-                totalReqs += 1
-                if bd.isOffPeak {
-                    offPeakReqs += 1
-                    totalOffPeakCostCny += bd.totalCostCny
-                } else {
-                    totalPeakCostCny += bd.totalCostCny
-                }
-                totalSpurCny += bd.totalCostCny
-                totalHitCostCny += bd.hitCostCny
-                totalMissCostCny += bd.missCostCny
-                totalOutCostCny += bd.outputCostCny
-                totalCacheSavedCny += bd.cacheSavedCny
-                totalOffPeakSavedCny += bd.offPeakSavedCny
-                totalOpenCodeUsd += rawUsd
-                modelFreq[modelId, default: 0] += 1
+                billedRecords.append(BilledMessageRecord(
+                    msgId: msgId,
+                    sessionId: sessId,
+                    createdMs: createdMs,
+                    modelId: modelId,
+                    hitTokens: hit,
+                    missTokens: miss,
+                    cacheWriteTokens: cacheWrite,
+                    outTokens: billedOut,
+                    reasoningTokens: min(billedOut, rawReas),
+                    rawUsd: rawUsd,
+                    breakdown: bd
+                ))
 
                 var acc = perSessionBilling[sessId] ?? SessionBillingAcc()
                 acc.hitTokens += hit
@@ -796,65 +1206,17 @@ final class OpenCodeDBReader {
                 acc.rawUsd += rawUsd
                 acc.cacheSavedCny += bd.cacheSavedCny
                 perSessionBilling[sessId] = acc
-
-                let msgDate = Date(timeIntervalSince1970: Double(createdMs) / 1000.0)
-                let hr = max(0, min(23, localCal.component(.hour, from: msgDate)))
-                hourlyReqBuckets[hr] += 1
-                hourlyCostBuckets[hr] += bd.totalCostCny
-                hourlyHitBuckets[hr] += hit
-                hourlyTotalInBuckets[hr] += (hit + miss)
             }
             sqlite3_finalize(stmt)
         }
 
-        let dominantModel = modelFreq.max(by: { $0.value < $1.value })?.key ?? "deepseek-flash"
-        let tier = DeepSeekPricingEngine.classifyModel(dominantModel)
-
-        let globalBilling = BillingTelemetrySummary(
-            dateLabel: TimeFormatters.todayShortLabel(),
-            dominantModelId: tier.canonicalModelId,
-            dominantModelSpec: tier.specSummary,
-            inputCacheHitTokens: totalHit,
-            inputCacheMissTokens: totalMiss,
-            cacheWriteTokens: totalCacheWrite,
-            outputTokens: totalOut,
-            reasoningTokens: totalReasoning,
-            requestCount: totalReqs,
-            offPeakRequestCount: offPeakReqs,
-            spurCostCny: totalSpurCny,
-            peakCostCny: totalPeakCostCny,
-            offPeakCostCny: totalOffPeakCostCny,
-            cacheHitCostCny: totalHitCostCny,
-            cacheMissCostCny: totalMissCostCny,
-            outputCostCny: totalOutCostCny,
-            cacheSavedCny: totalCacheSavedCny,
-            offPeakSavedCny: totalOffPeakSavedCny,
-            opencodeRawUsd: totalOpenCodeUsd
-        )
-
-        let hourlyPoints: [TodayHourlyPoint] = (0..<24).map { hr in
-            let totIn = hourlyTotalInBuckets[hr]
-            let hitPct = totIn > 0 ? (Double(hourlyHitBuckets[hr]) / Double(totIn)) * 100.0 : 0.0
-            let hourDate = todayStartDate.addingTimeInterval(Double(hr) * 3600.0 + 60.0)
-            let isPeak = (DeepSeekPricingEngine.priceWindow(at: hourDate) == .peak)
-            return TodayHourlyPoint(
-                hour: hr,
-                hourLabel: String(format: "%02d", hr),
-                requestCount: hourlyReqBuckets[hr],
-                costCny: hourlyCostBuckets[hr],
-                cacheHitPercent: hitPct,
-                isPeakHour: isPeak,
-                isCurrentHour: hr == currentHour
-            )
-        }
-
         return TodayMessageScanResult(
-            globalBilling: globalBilling,
+            billedRecords: billedRecords,
             perSessionBilling: perSessionBilling,
+            sessionProviderHint: sessionProviderHint,
             touchedSessionIds: touchedSessionIds,
             latestMsgPerSession: latestMsgPerSession,
-            lastCompletedDurPerSession: lastCompletedDurPerSession,
-            hourlyPoints: hourlyPoints
+            lastCompletedDurPerSession: lastCompletedDurPerSession
         )
     }
 
@@ -934,7 +1296,6 @@ final class OpenCodeDBReader {
         ids: inout Set<String>
     ) {
         guard !ids.isEmpty, sessionCols.contains("parent_id") else { return }
-        // 两轮父子闭包扩展，确保 Master <-> SubAgent 完整树结构不丢失
         for _ in 0..<2 {
             let beforeCount = ids.count
             let quoted = ids.map { "'\($0.replacingOccurrences(of: "'", with: "''"))'" }.joined(separator: ",")
@@ -1330,5 +1691,647 @@ final class OpenCodeDBReader {
     private func colString(_ stmt: OpaquePointer, _ index: Int32) -> String? {
         guard let cStr = sqlite3_column_text(stmt, index) else { return nil }
         return String(cString: cStr)
+    }
+
+    // MARK: - Read-Only Automatic API-Key & Provider Discovery (opencode.db + auth.json + opencode.json + .env)
+
+    private func queryProjectWorktrees(db: OpaquePointer) -> [String] {
+        guard tableExists(db: db, name: "project") else { return [] }
+        let cols = tableColumns(db: db, table: "project")
+        guard cols.contains("worktree") else { return [] }
+        var dirs: [String] = []
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "SELECT DISTINCT worktree FROM project WHERE worktree IS NOT NULL AND worktree != '' LIMIT 16;", -1, &stmt, nil) == SQLITE_OK, let stmt {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let d = colString(stmt, 0), !d.isEmpty {
+                    dirs.append(d)
+                }
+            }
+            sqlite3_finalize(stmt)
+        }
+        return dirs
+    }
+
+    private func queryRecentMessageProviderHints(db: OpaquePointer, limit: Int) -> Set<String> {
+        var hints = Set<String>()
+        let sql = """
+        SELECT DISTINCT hint FROM (
+            SELECT COALESCE(
+                NULLIF(json_extract(data, '$.apiKeyName'), ''),
+                NULLIF(json_extract(data, '$.keyID'), ''),
+                NULLIF(json_extract(data, '$.providerID'), ''),
+                NULLIF(json_extract(data, '$.model.providerID'), ''),
+                ''
+            ) AS hint
+            FROM message
+            ORDER BY rowid DESC
+            LIMIT \(max(50, limit))
+        ) WHERE hint != '';
+        """
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let h = colString(stmt, 0), !h.isEmpty {
+                    hints.insert(h)
+                }
+            }
+            sqlite3_finalize(stmt)
+        }
+        return hints
+    }
+
+    private func discoverOpenCodeProfiles(
+        db: OpaquePointer,
+        activeDbName: String,
+        candidateDirectories: [String],
+        activeProviderHints: Set<String>
+    ) -> [APIKeyProfile] {
+        var found: [APIKeyProfile] = []
+
+        func appendCandidate(
+            idSeed: String,
+            name: String,
+            rawKey: String,
+            directoryKeyword: String = "",
+            providerId: String = "",
+            source: String
+        ) {
+            let cleanKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanProvider = providerId.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let masked = cleanKey.isEmpty ? "" : APIKeyProfile.makeMasked(cleanKey)
+
+            if !cleanKey.isEmpty {
+                if let existingIdx = found.firstIndex(where: { $0.rawApiKey == cleanKey }) {
+                    if found[existingIdx].providerId.isEmpty && !cleanProvider.isEmpty {
+                        found[existingIdx].providerId = cleanProvider
+                    }
+                    if found[existingIdx].directoryKeyword.isEmpty && !directoryKeyword.isEmpty {
+                        found[existingIdx].directoryKeyword = directoryKeyword
+                    }
+                    return
+                }
+            } else if !cleanProvider.isEmpty {
+                if found.contains(where: { $0.providerId.lowercased() == cleanProvider.lowercased() }) {
+                    return
+                }
+            } else {
+                return
+            }
+
+            let safeSeed = idSeed
+                .lowercased()
+                .replacingOccurrences(of: "[^a-z0-9_-]", with: "-", options: .regularExpression)
+            let finalId = "auto-\(safeSeed.isEmpty ? UUID().uuidString.prefix(6) : Substring(safeSeed.prefix(28)))"
+            let finalName = cleanName.isEmpty ? friendlyProviderDisplayName(cleanProvider) : cleanName
+
+            found.append(APIKeyProfile(
+                id: finalId,
+                name: finalName,
+                rawApiKey: cleanKey,
+                maskedKey: masked,
+                directoryKeyword: directoryKeyword,
+                providerId: cleanProvider,
+                autoSource: source
+            ))
+        }
+
+        // 1. 扫描 opencode.db 内部凭据/账号/Provider 配置表（如 credential / account / control_account / auth / provider）
+        let skipTables: Set<String> = ["session", "message", "part", "todo", "permission", "project", "workspace"]
+        var candidateTables: [String] = []
+        var tblStmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "SELECT name FROM sqlite_master WHERE type='table';", -1, &tblStmt, nil) == SQLITE_OK, let tblStmt {
+            while sqlite3_step(tblStmt) == SQLITE_ROW {
+                if let tName = colString(tblStmt, 0) {
+                    let lower = tName.lowercased()
+                    guard !lower.hasPrefix("sqlite_"), !skipTables.contains(lower) else { continue }
+                    if lower.contains("cred") || lower.contains("auth") || lower.contains("account")
+                        || lower.contains("provider") || lower.contains("key") || lower.contains("config") || lower.contains("setting") {
+                        candidateTables.append(tName)
+                    }
+                }
+            }
+            sqlite3_finalize(tblStmt)
+        }
+
+        for table in candidateTables {
+            let safeTable = table.replacingOccurrences(of: "\"", with: "\"\"")
+            var rowStmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT * FROM \"\(safeTable)\" LIMIT 100;", -1, &rowStmt, nil) == SQLITE_OK,
+                  let rowStmt else { continue }
+            let colCount = sqlite3_column_count(rowStmt)
+            var rowIdx = 0
+            while sqlite3_step(rowStmt) == SQLITE_ROW {
+                rowIdx += 1
+                var rowProvider = ""
+                var rowDisplayName = ""
+                var extractedKeys: [String] = []
+
+                for c in 0..<colCount {
+                    let cName = sqlite3_column_name(rowStmt, c).map { String(cString: $0).lowercased() } ?? ""
+                    guard let val = colString(rowStmt, c), !val.isEmpty else { continue }
+
+                    if (cName == "provider" || cName == "provider_id" || cName == "providerid" || cName == "id") && rowProvider.isEmpty && !val.hasPrefix("sk-") {
+                        rowProvider = val
+                    } else if (cName == "name" || cName == "label" || cName == "title") && rowDisplayName.isEmpty && !val.hasPrefix("sk-") {
+                        rowDisplayName = val
+                    }
+
+                    let matches = extractSkKeys(from: val)
+                    for k in matches where !extractedKeys.contains(k) {
+                        extractedKeys.append(k)
+                    }
+                }
+
+                for (kIdx, rawKey) in extractedKeys.enumerated() {
+                    let isDeepSeekRelated = rowProvider.lowercased().contains("deepseek")
+                        || rowDisplayName.lowercased().contains("deepseek")
+                        || activeProviderHints.contains(where: { $0.lowercased() == rowProvider.lowercased() })
+                        || activeProviderHints.isEmpty
+                    guard isDeepSeekRelated || rawKey.hasPrefix("sk-") else { continue }
+                    let label = !rowDisplayName.isEmpty
+                        ? rowDisplayName
+                        : (!rowProvider.isEmpty ? friendlyProviderDisplayName(rowProvider) : "数据库提取Key")
+                    appendCandidate(
+                        idSeed: "db-\(table)-\(rowProvider)-\(rowIdx)-\(kIdx)",
+                        name: label,
+                        rawKey: rawKey,
+                        providerId: rowProvider.isEmpty ? "deepseek" : rowProvider,
+                        source: activeDbName
+                    )
+                }
+            }
+            sqlite3_finalize(rowStmt)
+        }
+
+        // 2. 若 opencode.db 的 message.data 中直接带有 sk-... 或自定义 key 标签，直接提取
+        for hint in activeProviderHints {
+            let directKeys = extractSkKeys(from: hint)
+            for k in directKeys {
+                appendCandidate(
+                    idSeed: "msg-\(k.suffix(4))",
+                    name: "DB消息Key",
+                    rawKey: k,
+                    providerId: hint,
+                    source: activeDbName
+                )
+            }
+        }
+
+        // 3. 合并同目录 auth.json / ~/.config/opencode/opencode.json / 项目配置 / 环境变量中的 Key
+        let fileProfiles = discoverProfilesFromFilesAndEnv(
+            candidateDirectories: candidateDirectories,
+            activeProviderHints: activeProviderHints
+        )
+        for fp in fileProfiles {
+            appendCandidate(
+                idSeed: fp.id.replacingOccurrences(of: "auto-", with: ""),
+                name: fp.name,
+                rawKey: fp.rawApiKey,
+                directoryKeyword: fp.directoryKeyword,
+                providerId: fp.providerId,
+                source: fp.autoSource ?? "opencode"
+            )
+        }
+
+        // 4. 若 opencode.db 存在活跃的 providerID / key 通道但本地未存明文 sk-，依然自动生成只读通道项供一键筛选账单
+        let sortedHints = activeProviderHints.sorted()
+        for hint in sortedHints {
+            let lower = hint.lowercased()
+            let alreadyCovered = found.contains { prof in
+                prof.providerId.lowercased() == lower || prof.name.lowercased() == lower
+            }
+            if !alreadyCovered && (lower.contains("deepseek") || sortedHints.count > 1) {
+                appendCandidate(
+                    idSeed: "ch-\(lower)",
+                    name: friendlyProviderDisplayName(hint),
+                    rawKey: "",
+                    providerId: hint,
+                    source: activeDbName
+                )
+            }
+        }
+
+        return found
+    }
+
+    private func discoverProfilesFromFilesAndEnv(
+        candidateDirectories: [String],
+        activeProviderHints: Set<String>
+    ) -> [APIKeyProfile] {
+        let fm = FileManager.default
+        let envMap = loadLocalEnvVariables(projectDirectories: candidateDirectories)
+        var results: [APIKeyProfile] = []
+
+        func recordKey(
+            seed: String,
+            name: String,
+            rawKey: String,
+            directoryKeyword: String = "",
+            providerId: String,
+            source: String
+        ) {
+            let resolved = resolveEnvPlaceholder(rawKey, envMap: envMap)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard resolved.count >= 8 else { return }
+
+            let lowerProv = providerId.lowercased()
+            let lowerName = name.lowercased()
+            let isRelevant = lowerProv.contains("deepseek")
+                || lowerName.contains("deepseek")
+                || activeProviderHints.contains(where: { $0.lowercased() == lowerProv })
+                || (activeProviderHints.isEmpty && resolved.hasPrefix("sk-"))
+            guard isRelevant else { return }
+
+            if let idx = results.firstIndex(where: { $0.rawApiKey == resolved }) {
+                if results[idx].directoryKeyword.isEmpty && !directoryKeyword.isEmpty {
+                    results[idx].directoryKeyword = directoryKeyword
+                }
+                if (results[idx].name == "DeepSeek 官方" || results[idx].name.hasPrefix("DeepSeek")) && !name.isEmpty && name != providerId {
+                    results[idx].name = name
+                }
+                return
+            }
+
+            let cleanSeed = seed
+                .lowercased()
+                .replacingOccurrences(of: "[^a-z0-9_-]", with: "-", options: .regularExpression)
+            results.append(APIKeyProfile(
+                id: "auto-\(cleanSeed.prefix(28))",
+                name: name.isEmpty ? friendlyProviderDisplayName(providerId) : name,
+                rawApiKey: resolved,
+                maskedKey: APIKeyProfile.makeMasked(resolved),
+                directoryKeyword: directoryKeyword,
+                providerId: providerId.isEmpty ? "deepseek" : providerId,
+                autoSource: source
+            ))
+        }
+
+        // A. 扫描 ~/.local/share/opencode/auth.json (与 opencode.db 同目录的官方凭据文件)
+        let authJsonCandidates = [
+            (opencodeDirPath as NSString).appendingPathComponent("auth.json"),
+            ("~/.local/share/opencode/auth.json" as NSString).expandingTildeInPath,
+            ("~/.config/opencode/auth.json" as NSString).expandingTildeInPath
+        ]
+        var visitedPaths = Set<String>()
+        for path in authJsonCandidates {
+            let stdPath = (path as NSString).standardizingPath
+            guard !visitedPaths.contains(stdPath), fm.fileExists(atPath: stdPath) else { continue }
+            visitedPaths.insert(stdPath)
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: stdPath)),
+                  data.count <= 512_000,
+                  let rawText = String(data: data, encoding: .utf8) else { continue }
+
+            let cleaned = stripJSONCommentsAndTrailingCommas(rawText)
+            if let cleanData = cleaned.data(using: .utf8),
+               let root = try? JSONSerialization.jsonObject(with: cleanData) as? [String: Any] {
+                for (provId, val) in root {
+                    if let dict = val as? [String: Any] {
+                        let keyStr = (dict["key"] as? String)
+                            ?? (dict["apiKey"] as? String)
+                            ?? (dict["api_key"] as? String)
+                            ?? (dict["token"] as? String)
+                            ?? (dict["access"] as? String)
+                            ?? ""
+                        let dispName = (dict["name"] as? String) ?? friendlyProviderDisplayName(provId)
+                        if !keyStr.isEmpty {
+                            recordKey(
+                                seed: "auth-\(provId)",
+                                name: dispName,
+                                rawKey: keyStr,
+                                providerId: provId,
+                                source: "auth.json"
+                            )
+                        }
+                    } else if let directStr = val as? String, directStr.hasPrefix("sk-") {
+                        recordKey(
+                            seed: "auth-\(provId)",
+                            name: friendlyProviderDisplayName(provId),
+                            rawKey: directStr,
+                            providerId: provId,
+                            source: "auth.json"
+                        )
+                    }
+                }
+            }
+        }
+
+        // B. 扫描全局及项目级 opencode.json / opencode.jsonc / config.json
+        var configEntries: [(path: String, dirScope: String, sourceLabel: String)] = []
+        let xdgConfig = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
+            .map { ($0 as NSString).expandingTildeInPath }
+            ?? ("~/.config" as NSString).expandingTildeInPath
+        let globalConfigDir = (xdgConfig as NSString).appendingPathComponent("opencode")
+        for fileName in ["opencode.json", "opencode.jsonc", "config.json"] {
+            configEntries.append(((globalConfigDir as NSString).appendingPathComponent(fileName), "", fileName))
+            let homeDotDir = ("~/.opencode" as NSString).expandingTildeInPath
+            configEntries.append(((homeDotDir as NSString).appendingPathComponent(fileName), "", fileName))
+        }
+        for projDir in candidateDirectories {
+            let expandedProj = (projDir as NSString).expandingTildeInPath
+            configEntries.append(((expandedProj as NSString).appendingPathComponent("opencode.json"), projDir, "项目 opencode.json"))
+            configEntries.append(((expandedProj as NSString).appendingPathComponent("opencode.jsonc"), projDir, "项目 opencode.jsonc"))
+            configEntries.append(((expandedProj as NSString).appendingPathComponent(".opencode/opencode.json"), projDir, "项目 .opencode"))
+        }
+
+        for entry in configEntries {
+            let stdPath = (entry.path as NSString).standardizingPath
+            guard !visitedPaths.contains(stdPath), fm.fileExists(atPath: stdPath) else { continue }
+            visitedPaths.insert(stdPath)
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: stdPath)),
+                  data.count <= 512_000,
+                  let rawText = String(data: data, encoding: .utf8) else { continue }
+
+            let cleaned = stripJSONCommentsAndTrailingCommas(rawText)
+            guard let cleanData = cleaned.data(using: .utf8),
+                  let root = try? JSONSerialization.jsonObject(with: cleanData) as? [String: Any] else { continue }
+
+            let providersDict = (root["provider"] as? [String: Any])
+                ?? (root["providers"] as? [String: Any])
+                ?? [:]
+            for (provId, rawProv) in providersDict {
+                guard let provDict = rawProv as? [String: Any] else { continue }
+                let dispName = (provDict["name"] as? String) ?? friendlyProviderDisplayName(provId)
+                let opts = (provDict["options"] as? [String: Any])
+                    ?? (provDict["settings"] as? [String: Any])
+                    ?? [:]
+                let apiKey = (opts["apiKey"] as? String)
+                    ?? (opts["api_key"] as? String)
+                    ?? (provDict["apiKey"] as? String)
+                    ?? (provDict["key"] as? String)
+                    ?? ""
+                let baseURL = (opts["baseURL"] as? String) ?? (opts["baseUrl"] as? String) ?? ""
+                let effectiveProvId = baseURL.lowercased().contains("deepseek") && !provId.lowercased().contains("deepseek")
+                    ? "\(provId)"
+                    : provId
+                if !apiKey.isEmpty {
+                    let finalName = baseURL.lowercased().contains("deepseek") && !dispName.lowercased().contains("deepseek") && dispName == provId
+                        ? "DeepSeek · \(dispName)"
+                        : dispName
+                    recordKey(
+                        seed: "cfg-\(provId)-\(entry.dirScope.suffix(10))",
+                        name: finalName,
+                        rawKey: apiKey,
+                        directoryKeyword: entry.dirScope,
+                        providerId: effectiveProvId,
+                        source: entry.sourceLabel
+                    )
+                }
+            }
+        }
+
+        // C. 补充环境变量或项目 .env 中的 DEEPSEEK_API_KEY（支持多 Key 环境变量如 DEEPSEEK_API_KEY_2）
+        for (envKey, envVal) in envMap.sorted(by: { $0.key < $1.key }) {
+            let upper = envKey.uppercased()
+            guard upper.contains("DEEPSEEK") && upper.contains("KEY") else { continue }
+            let trimmed = envVal.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.count >= 8 else { continue }
+            let label = upper == "DEEPSEEK_API_KEY" ? "DeepSeek 环境变量Key" : envKey
+            recordKey(
+                seed: "env-\(envKey)",
+                name: label,
+                rawKey: trimmed,
+                providerId: "deepseek",
+                source: "环境变量"
+            )
+        }
+
+        return results
+    }
+
+    private func mergeDiscoveredAndManualProfiles(
+        discovered: [APIKeyProfile],
+        manual: [APIKeyProfile]
+    ) -> [APIKeyProfile] {
+        var merged: [APIKeyProfile] = manual.filter { prof in
+            if !discovered.isEmpty,
+               prof.id == "key-default",
+               prof.rawApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               prof.directoryKeyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               prof.name == "默认主Key" {
+                return false
+            }
+            return true
+        }
+
+        for disc in discovered {
+            if let idx = merged.firstIndex(where: { existing in
+                existing.id == disc.id
+                    || (!existing.rawApiKey.isEmpty && !disc.rawApiKey.isEmpty && existing.rawApiKey == disc.rawApiKey)
+                    || (existing.rawApiKey.isEmpty && !disc.rawApiKey.isEmpty && existing.name.lowercased() == disc.name.lowercased())
+            }) {
+                if merged[idx].rawApiKey.isEmpty && !disc.rawApiKey.isEmpty {
+                    merged[idx].rawApiKey = disc.rawApiKey
+                    merged[idx].maskedKey = disc.maskedKey
+                }
+                if merged[idx].providerId.isEmpty && !disc.providerId.isEmpty {
+                    merged[idx].providerId = disc.providerId
+                }
+                if merged[idx].directoryKeyword.isEmpty && !disc.directoryKeyword.isEmpty {
+                    merged[idx].directoryKeyword = disc.directoryKeyword
+                }
+                if merged[idx].autoSource == nil {
+                    merged[idx].autoSource = disc.autoSource
+                }
+            } else {
+                merged.append(disc)
+            }
+        }
+
+        if merged.isEmpty {
+            merged.append(APIKeyProfile(
+                id: "key-default",
+                name: "默认主Key",
+                rawApiKey: "",
+                maskedKey: "",
+                directoryKeyword: ""
+            ))
+        }
+
+        return merged
+    }
+
+    private func friendlyProviderDisplayName(_ providerId: String) -> String {
+        let lower = providerId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lower.isEmpty || lower == "deepseek" {
+            return "DeepSeek 官方"
+        }
+        if lower.hasPrefix("deepseek-") || lower.hasPrefix("deepseek_") {
+            let suffix = String(providerId.dropFirst("deepseek-".count))
+            return "DeepSeek · \(suffix)"
+        }
+        return providerId
+    }
+
+    private func extractSkKeys(from text: String) -> [String] {
+        guard text.contains("sk-") else { return [] }
+        guard let regex = try? NSRegularExpression(pattern: "sk-[A-Za-z0-9_-]{12,128}") else { return [] }
+        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        let matches = regex.matches(in: text, range: nsRange)
+        var out: [String] = []
+        for m in matches {
+            if let r = Range(m.range, in: text) {
+                let key = String(text[r])
+                if !out.contains(key) {
+                    out.append(key)
+                }
+            }
+        }
+        return out
+    }
+
+    private func loadLocalEnvVariables(projectDirectories: [String]) -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let fm = FileManager.default
+        var candidateFiles: [String] = [
+            (opencodeDirPath as NSString).appendingPathComponent(".env"),
+            ("~/.config/opencode/.env" as NSString).expandingTildeInPath,
+            ("~/.zshenv" as NSString).expandingTildeInPath,
+            ("~/.zshrc" as NSString).expandingTildeInPath,
+            ("~/.zprofile" as NSString).expandingTildeInPath,
+            ("~/.bash_profile" as NSString).expandingTildeInPath
+        ]
+        for dir in projectDirectories {
+            let expanded = (dir as NSString).expandingTildeInPath
+            candidateFiles.append((expanded as NSString).appendingPathComponent(".env"))
+        }
+
+        var seen = Set<String>()
+        for path in candidateFiles {
+            let std = (path as NSString).standardizingPath
+            guard !seen.contains(std), fm.fileExists(atPath: std) else { continue }
+            seen.insert(std)
+            guard let attrs = try? fm.attributesOfItem(atPath: std),
+                  let fileSize = attrs[.size] as? NSNumber,
+                  fileSize.intValue <= 256_000,
+                  let content = try? String(contentsOfFile: std, encoding: .utf8) else { continue }
+
+            for rawLine in content.components(separatedBy: .newlines) {
+                var line = rawLine.trimmingCharacters(in: .whitespaces)
+                guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+                if line.hasPrefix("export ") {
+                    line = String(line.dropFirst("export ".count)).trimmingCharacters(in: .whitespaces)
+                }
+                guard let eqIdx = line.firstIndex(of: "=") else { continue }
+                let k = String(line[..<eqIdx]).trimmingCharacters(in: .whitespaces)
+                guard !k.isEmpty, env[k] == nil else { continue }
+                var v = String(line[line.index(after: eqIdx)...]).trimmingCharacters(in: .whitespaces)
+                if (v.hasPrefix("\"") && v.hasSuffix("\"")) || (v.hasPrefix("'") && v.hasSuffix("'")), v.count >= 2 {
+                    v = String(v.dropFirst().dropLast())
+                }
+                if !v.isEmpty {
+                    env[k] = v
+                }
+            }
+        }
+        return env
+    }
+
+    private func resolveEnvPlaceholder(_ raw: String, envMap: [String: String]) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("{env:"), trimmed.hasSuffix("}"), trimmed.count > 6 {
+            let varName = String(trimmed.dropFirst(5).dropLast()).trimmingCharacters(in: .whitespaces)
+            return envMap[varName] ?? ""
+        }
+        if trimmed.hasPrefix("${"), trimmed.hasSuffix("}"), trimmed.count > 3 {
+            let varName = String(trimmed.dropFirst(2).dropLast()).trimmingCharacters(in: .whitespaces)
+            return envMap[varName] ?? ""
+        }
+        if trimmed.hasPrefix("$"), !trimmed.contains(" "), trimmed.count > 2 {
+            let varName = String(trimmed.dropFirst())
+            return envMap[varName] ?? trimmed
+        }
+        return trimmed
+    }
+
+    /// 安全剥离 JSONC 中的 // 单行注释、/* */ 块注释以及尾随逗号，绝不破坏字符串字面量内的 https://
+    private func stripJSONCommentsAndTrailingCommas(_ raw: String) -> String {
+        let chars = Array(raw)
+        let n = chars.count
+        var pass1: [Character] = []
+        pass1.reserveCapacity(n)
+
+        var i = 0
+        var inString = false
+        var escaped = false
+
+        while i < n {
+            let ch = chars[i]
+            if inString {
+                pass1.append(ch)
+                if escaped {
+                    escaped = false
+                } else if ch == "\\" {
+                    escaped = true
+                } else if ch == "\"" {
+                    inString = false
+                }
+                i += 1
+            } else {
+                if ch == "\"" {
+                    inString = true
+                    pass1.append(ch)
+                    i += 1
+                } else if ch == "/", i + 1 < n, chars[i + 1] == "/" {
+                    i += 2
+                    while i < n && chars[i] != "\n" {
+                        i += 1
+                    }
+                } else if ch == "/", i + 1 < n, chars[i + 1] == "*" {
+                    i += 2
+                    while i + 1 < n && !(chars[i] == "*" && chars[i + 1] == "/") {
+                        i += 1
+                    }
+                    i += 2
+                } else {
+                    pass1.append(ch)
+                    i += 1
+                }
+            }
+        }
+
+        var pass2: [Character] = []
+        pass2.reserveCapacity(pass1.count)
+        let m = pass1.count
+        var j = 0
+        inString = false
+        escaped = false
+
+        while j < m {
+            let ch = pass1[j]
+            if inString {
+                pass2.append(ch)
+                if escaped {
+                    escaped = false
+                } else if ch == "\\" {
+                    escaped = true
+                } else if ch == "\"" {
+                    inString = false
+                }
+                j += 1
+            } else {
+                if ch == "\"" {
+                    inString = true
+                    pass2.append(ch)
+                    j += 1
+                } else if ch == "," {
+                    var k = j + 1
+                    while k < m && (pass1[k] == " " || pass1[k] == "\t" || pass1[k] == "\r" || pass1[k] == "\n") {
+                        k += 1
+                    }
+                    if k < m && (pass1[k] == "}" || pass1[k] == "]") {
+                        j += 1 // 跳过尾随逗号
+                    } else {
+                        pass2.append(ch)
+                        j += 1
+                    }
+                } else {
+                    pass2.append(ch)
+                    j += 1
+                }
+            }
+        }
+
+        return String(pass2)
     }
 }
